@@ -406,7 +406,7 @@ void PointProcessor::PointToRing(const PointCloudConstPtr &cloud_in,
         azi_rad_rel += 2 * M_PI;
       }
 
-      float rel_time = config_.scan_period * azi_rad_rel / (2 * M_PI);
+      float rel_time = config_.scan_period * azi_rad_rel / (2 * M_PI); //时间比例
 
       ///>mine
 #ifndef DEBUG_ORIGIN

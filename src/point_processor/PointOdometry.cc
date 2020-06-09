@@ -65,14 +65,14 @@
 namespace lio {
 
 PointOdometry::PointOdometry(float scan_period, int io_ratio, size_t num_max_iterations)
-    : scan_period_(scan_period),
-      time_factor_(1 / scan_period),
+    : scan_period_(scan_period), //0.1
+      time_factor_(1 / scan_period), //10
       io_ratio_(io_ratio),
       system_inited_(false),
       frame_count_(0),
       num_max_iterations_(num_max_iterations),
-      delta_r_abort_(0.1), //TODO 或许可以再小点
-      delta_t_abort_(0.1),
+      delta_r_abort_(0.1), //单位度
+      delta_t_abort_(0.1), //单位cm
       corner_points_sharp_(new PointCloud()),
       corner_points_less_sharp_(new PointCloud()),
       surf_points_flat_(new PointCloud()),
@@ -111,7 +111,7 @@ void PointOdometry::SetupRos(ros::NodeHandle &nh) {
   enable_odom_service_ = nh.advertiseService("/enable_odom", &PointOdometry::EnableOdom, this);
 
   if (compact_data_) {//true
-    pub_compact_data_ = nh.advertise<sensor_msgs::PointCloud2>("/compact_data", 2);
+    pub_compact_data_ = nh.advertise<sensor_msgs::PointCloud2>("/compact_data", 2); //mapping使用
   } else {
     // advertise laser odometry topics
     pub_laser_cloud_corner_last_ = nh.advertise<sensor_msgs::PointCloud2>("/laser_cloud_corner_last", 2);
@@ -205,6 +205,7 @@ void PointOdometry::LaserFullCloudHandler(const sensor_msgs::PointCloud2ConstPtr
   new_full_cloud_ = true;
 }
 
+//not used
 void PointOdometry::ImuTransHandler(const sensor_msgs::PointCloud2ConstPtr &imu_trans_msg) {
   time_imu_trans_ = imu_trans_msg->header.stamp;
 
@@ -213,6 +214,7 @@ void PointOdometry::ImuTransHandler(const sensor_msgs::PointCloud2ConstPtr &imu_
 
   new_imu_trans_ = true;
 }
+
 
 void PointOdometry::Reset() {
   new_corner_points_sharp_ = false;
@@ -236,7 +238,7 @@ bool PointOdometry::HasNewData() {
 
 void PointOdometry::TransformToStart(const PointT &pi, PointT &po) {
   float s = time_factor_ * (pi.intensity - int(pi.intensity));
-  if (no_deskew_) {
+  if (no_deskew_) {//false
     s = 0;
   }
   if (s < 0 || s > 1.001) {
@@ -270,20 +272,20 @@ size_t PointOdometry::TransformToEnd(PointCloudPtr &cloud) {
       s = 0;
     }
 
-    point.x -= s * transform_es_.pos.x();
-    point.y -= s * transform_es_.pos.y();
-    point.z -= s * transform_es_.pos.z();
+    point.x -= s * transform_es_.pos.x(); //先转换到start，然后再end
+    point.y -= s * transform_es_.pos.y(); //P_s = (sR)^T (p - st)
+    point.z -= s * transform_es_.pos.z(); //P_e = R * P_s + t
     point.intensity = int(point.intensity);
 
     Eigen::Quaternionf q_id, q_s, q_e;
     q_e = transform_es_.rot;
     q_id.setIdentity();
-    q_s = q_id.slerp(s, q_e);
+    q_s = q_id.slerp(s, q_e); 
 
     RotatePoint(q_s.conjugate(), point);
     RotatePoint(q_e, point);
 
-    point.x += transform_es_.pos.x();
+    point.x += transform_es_.pos.x(); 
     point.y += transform_es_.pos.y();
     point.z += transform_es_.pos.z();
   }
@@ -291,6 +293,8 @@ size_t PointOdometry::TransformToEnd(PointCloudPtr &cloud) {
   return cloud_size;
 }
 
+
+//主入口
 void PointOdometry::Process() {
   if (!HasNewData()) {
     // DLOG(INFO) << "no data received or dropped";
@@ -312,14 +316,14 @@ void PointOdometry::Process() {
   PointT coeff;
   bool is_degenerate = false;
 
-  ++frame_count_;
+  ++frame_count_; //TODO 最终会溢出
 
   size_t last_corner_size = last_corner_cloud_->points.size();
   size_t last_surf_size = last_surf_cloud_->points.size();
 
   tic_toc_.Tic();
 
-  if (enable_odom_) {
+  if (enable_odom_) {//true
     // NOTE: fixed number here
     if (last_corner_size > 10 && last_surf_size > 100) {
       std::vector<int> point_search_idx(1);
@@ -340,7 +344,7 @@ void PointOdometry::Process() {
         coeff_sel_->clear();
 
         for (int i = 0; i < num_curr_corner_points_sharp; ++i) {
-          TransformToStart(corner_points_sharp_->points[i], point_sel);
+          TransformToStart(corner_points_sharp_->points[i], point_sel); //i
           if (iter_count % 5 == 0) {
             kdtree_corner_last_->nearestKSearch(point_sel, 1, point_search_idx, point_search_sq_dis);
 
@@ -380,8 +384,8 @@ void PointOdometry::Process() {
               }
             }
 
-            idx_corner1_[i] = closest_point_idx;
-            idx_corner2_[i] = second_closet_point_idx;
+            idx_corner1_[i] = closest_point_idx; //j
+            idx_corner2_[i] = second_closet_point_idx; //l
           } // NOTE: two points for closest points in a line, update points
 
           if (idx_corner2_[i] >= 0) {
@@ -438,7 +442,7 @@ void PointOdometry::Process() {
         } // NOTE: for corner points
 
         for (int i = 0; i < num_curr_surf_points_flat; ++i) {
-          TransformToStart(surf_points_flat_->points[i], point_sel);
+          TransformToStart(surf_points_flat_->points[i], point_sel); //i
 
           if (iter_count % 5 == 0) {
             kdtree_surf_last_->nearestKSearch(point_sel, 1, point_search_idx, point_search_sq_dis);
@@ -488,9 +492,9 @@ void PointOdometry::Process() {
               }
             }
 
-            idx_surf1_[i] = closest_point_idx;
-            idx_surf2_[i] = second_closet_point_idx;
-            idx_surf3_[i] = third_clost_point_idx;
+            idx_surf1_[i] = closest_point_idx; //j
+            idx_surf2_[i] = second_closet_point_idx; //l
+            idx_surf3_[i] = third_clost_point_idx; //m
           }
 
           if (idx_surf2_[i] >= 0 && idx_surf3_[i] >= 0) {
@@ -553,8 +557,12 @@ void PointOdometry::Process() {
           Eigen::Vector3f p_minus_t = p - transform_es_.pos;
 
 //        Eigen::Vector3f J_r = w.transpose() * RotationTransposeVectorJacobian(R_SO3, p_minus_t);
-          Eigen::Vector3f J_r = w.transpose() * SkewSymmetric(transform_es_.rot.conjugate() * p_minus_t);
+          Eigen::Vector3f J_r = w.transpose() * SkewSymmetric (transform_es_.rot.conjugate() * p_minus_t); //作者使用的是左扰动公式
           Eigen::Vector3f J_t = -w.transpose() * transform_es_.rot.toRotationMatrix().transpose();
+          //p0 = R^T(p - t), 
+          //p0对R偏导(右扰动) = R^T * (p - t)^
+          //p0对R偏导(左扰动) = [ R^T *(p - t) ]^
+          //p0对t偏导 = p0对(p-t)偏导 * (p-t)对ｔ偏导
 
           // float s = 1;
 
@@ -651,6 +659,7 @@ void PointOdometry::Process() {
 
       } /// iteration
     } /// enough points
+
     Twist<float> transform_se = transform_es_.inverse();
     Twist<float> transform_sum_tmp = transform_sum_ * transform_se;
     transform_sum_ = transform_sum_tmp;
@@ -701,7 +710,7 @@ void PointOdometry::PublishResults() {
   laser_odometry_msg_.pose.pose.position.x = transform_sum_.pos.x();
   laser_odometry_msg_.pose.pose.position.y = transform_sum_.pos.y();
   laser_odometry_msg_.pose.pose.position.z = transform_sum_.pos.z();
-  pub_laser_odometry_.publish(laser_odometry_msg_);
+  pub_laser_odometry_.publish(laser_odometry_msg_); //在正常ROS坐标系(x-front, y-left, z-up)下的变换
 
   laser_odometry_trans_.stamp_ = time_corner_points_sharp_;
   laser_odometry_trans_.setRotation(tf::Quaternion(geo_quat.x, geo_quat.y, geo_quat.z, geo_quat.w));
@@ -729,7 +738,7 @@ void PointOdometry::PublishResults() {
       TransformToEnd(full_cloud_);  // transform full resolution cloud to sweep end before sending it
     }
 
-    if (compact_data_) {
+    if (compact_data_) {//true
       TicToc tic_toc_encoder;
 
       PointCloud compact_data;
@@ -751,8 +760,8 @@ void PointOdometry::PublishResults() {
       }
 
       {
-        compact_point.x = last_corner_cloud_->size();
-        compact_point.y = last_surf_cloud_->size();
+        compact_point.x = last_corner_cloud_->size(); //curr less sharp points
+        compact_point.y = last_surf_cloud_->size(); //curr less surf points
         compact_point.z = full_cloud_->size();
         compact_data.push_back(compact_point);
 

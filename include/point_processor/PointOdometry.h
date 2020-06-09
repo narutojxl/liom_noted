@@ -101,7 +101,7 @@ class PointOdometry {
  public:
   PointOdometry(float scan_period = 0.1,
                 int io_ratio = 2,
-                size_t num_max_iterations = 25);
+                size_t num_max_iterations = 25); //TODO可以再大点
   void SetupRos(ros::NodeHandle &nh);
   void Reset();
 
@@ -155,8 +155,8 @@ class PointOdometry {
   long frame_count_;        ///< number of processed frames
 
   bool system_inited_ = false;
-  size_t num_max_iterations_ = 25;
-  Transform transform_es_; ///< transform from the start to the end
+  size_t num_max_iterations_ = 25; 
+  Transform transform_es_; ///< transform from the start to the end, 从当前帧到上一帧delta变换
   Transform transform_sum_; ///< transform from the current to the init
 
   double delta_r_abort_;
@@ -168,8 +168,8 @@ class PointOdometry {
   PointCloudPtr surf_points_less_flat_;
   PointCloudPtr full_cloud_;
 
-  PointCloudPtr last_corner_cloud_;
-  PointCloudPtr last_surf_cloud_;
+  PointCloudPtr last_corner_cloud_;//上一帧less sharp points
+  PointCloudPtr last_surf_cloud_; //上一帧less surf points
   PointCloudPtr laser_cloud_ori_;
   PointCloudPtr coeff_sel_;
 

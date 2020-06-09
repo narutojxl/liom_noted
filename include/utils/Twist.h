@@ -55,11 +55,13 @@ struct Twist {
     this->pos = pos_in;
   }
 
+  //由Eigen::transform构造
   Twist(Eigen::Transform<T, 3, Eigen::TransformTraits::Affine> transform) {
     this->rot = Eigen::Quaternion<T>{transform.linear()}.normalized();
     this->pos = transform.translation();
   }
-
+  
+  //转换成Eigen::transform
   Eigen::Transform<T, 3, Eigen::TransformTraits::Affine> transform() const {
     Eigen::Transform<T, 3, Eigen::TransformTraits::Affine> transform;
     transform.linear() = rot.normalized().toRotationMatrix();
@@ -75,11 +77,13 @@ struct Twist {
     return twist_inv;
   }
 
+  //右乘other
   Twist operator*(const Twist &other) const {
     Eigen::Transform<T, 3, Eigen::TransformTraits::Affine> transform_out = this->transform() * other.transform();
     return Twist(transform_out);
   }
 
+  //转换成其他的类型(float, double)
   template<typename NewType>
   Twist<NewType> cast() const {
     Twist<NewType> twist_new{this->rot.template cast<NewType>(), this->pos.template cast<NewType>()};
