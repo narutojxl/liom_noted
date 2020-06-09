@@ -104,17 +104,17 @@ enum PointLabel {
 struct PointProcessorConfig {
   bool deskew = false;
   double scan_period = 0.1;
-  int num_scan_subregions = 8;
-  int num_curvature_regions = 5;
-  float surf_curv_th = 0.1;
+  int num_scan_subregions = 8; //把一线scan水平分成8份
+  int num_curvature_regions = 5; //用周围10个点计算曲率
+  float surf_curv_th = 0.1; //曲率大于该值为corners,否则为surfs
   int max_corner_sharp = 2;
   int max_corner_less_sharp = 10 * max_corner_sharp;
   int max_surf_flat = 4;
-  float less_flat_filter_size = 0.2;
+  float less_flat_filter_size = 0.2; //对less surf points降采样分辨率
 
-  string capture_frame_id = "/map";
+  string capture_frame_id = "/map"; //4类特征点所在坐标系，此处的/map应该为/laser
 
-  double rad_diff = 0.2;
+  double rad_diff = 0.2;  //infer_start_ori_为false时， not useful
 
   bool infer_start_ori_ = false;
 };
@@ -167,14 +167,14 @@ class PointProcessor {
   void PublishResults();
 
   // TODO: not necessary data?
-  vector<PointCloudPtr> laser_scans;
-  vector<PointCloudPtr> intensity_scans;
-  vector<IndexRange> scan_ranges;
+  vector<PointCloudPtr> laser_scans; //n线, 强度值：ring + 时间比例
+  vector<PointCloudPtr> intensity_scans; //n线，强度值：强度值 + 时间比例
+  vector<IndexRange> scan_ranges;//n线，每线points对应的范围
 
  protected:
 
-  ros::Time sweep_start_;
-  ros::Time scan_time_;
+  ros::Time sweep_start_; //同scan_time_
+  ros::Time scan_time_;//每一帧的时间戳
 
   float lower_bound_;
   float upper_bound_;
@@ -183,20 +183,21 @@ class PointProcessor {
   PointProcessorConfig config_;
   TicToc tic_toc_;
 
-  PointCloudConstPtr cloud_ptr_;
-  pcl::PointCloud<PointIR>::Ptr cloud_ir_ptr_;
+  PointCloudConstPtr cloud_ptr_; 
+  pcl::PointCloud<PointIR>::Ptr cloud_ir_ptr_; //针对带ring的竖直方向非均匀分布的雷达型号
 
-  PointCloud cloud_in_rings_;
+  PointCloud cloud_in_rings_;//所有线，同intensity_scans
 
   PointCloud corner_points_sharp_;
   PointCloud corner_points_less_sharp_;
   PointCloud surface_points_flat_;
-  PointCloud surface_points_less_flat_;
+  PointCloud surface_points_less_flat_; //4类特征点的强度值：ring + 时间比例
 
   // the following will be assigened or resized
   vector<int> scan_ring_mask_;
   vector<pair<float, size_t> > curvature_idx_pairs_; // in subregion
   vector<PointLabel> subregion_labels_;     ///< point label buffer
+
 
 //  void PrepareRing(const size_t idx_ring);
 //  void PrepareSubregion(const size_t idx_ring, const size_t idx_start, const size_t idx_end);

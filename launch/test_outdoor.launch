@@ -1,7 +1,9 @@
 <!-- -*- mode: XML -*- -->
 
 <launch>
-
+  
+  <param name="/use_sim_time" value="true" />
+    
   <node pkg="lio" type="lio_processor_node" name="lio_processor" output="log">
     <param name="rad_diff" type="double" value="0.2" />
   </node>
@@ -9,5 +11,20 @@
   <node pkg="lio" type="lio_estimator_node" name="lio_estimator" output="screen">
     <param name="config_file" type="string" value="$(find lio)/config/outdoor_test_config.yaml" />
   </node>
+
+  
+  <!--arg name="enable_4d" default="true" />
+  <node pkg="lio" type="lio_map_builder_node" name="lio_map_builder" output="screen">
+  	<param name="compact_data" type="bool" value="false" />
+  	<param name="enable_4d" type="bool" value="$(arg enable_4d)" />
+  	<remap from="/full_odom_cloud" to="/local/full_points"/>
+  	<remap from="/laser_cloud_surf_last" to="/local/surf_points"/>
+  	<remap from="/laser_cloud_corner_last" to="/local/corner_points"/>
+  	<remap from="/laser_odom_to_init" to="/local_laser_odom"/>
+  </node-->
+
+
+  <node pkg="rviz" type="rviz" name="rviz" args="-d $(find lio)/rviz_cfg/lio_outdoor_test.rviz" /> <!--lio_map_builder.rviz -->
+
 
 </launch>

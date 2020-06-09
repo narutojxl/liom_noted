@@ -66,11 +66,11 @@ int main(int argc, char **argv) {
   PointProcessor processor; // Default sensor_type is 16
 
   if (sensor_type == 32) {
-    processor = PointProcessor(-30.67f, 10.67f, 32);
+    processor = PointProcessor(-30.67f, 10.67f, 32); //上下FOV角度
   } else if (sensor_type == 64) {
     processor = PointProcessor(-24.9f, 2, 64);
-  } else if (sensor_type == 320) {
-    processor = PointProcessor(-25, 15, 32, true);
+  } else if (sensor_type == 320) { // 32 line lidar with ring information
+    processor = PointProcessor(-25, 15, 32, true); //非均匀分布
   }
 
   PointProcessorConfig config;

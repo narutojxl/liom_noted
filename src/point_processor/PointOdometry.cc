@@ -71,7 +71,7 @@ PointOdometry::PointOdometry(float scan_period, int io_ratio, size_t num_max_ite
       system_inited_(false),
       frame_count_(0),
       num_max_iterations_(num_max_iterations),
-      delta_r_abort_(0.1),
+      delta_r_abort_(0.1), //TODO 或许可以再小点
       delta_t_abort_(0.1),
       corner_points_sharp_(new PointCloud()),
       corner_points_less_sharp_(new PointCloud()),
@@ -110,7 +110,7 @@ void PointOdometry::SetupRos(ros::NodeHandle &nh) {
 
   enable_odom_service_ = nh.advertiseService("/enable_odom", &PointOdometry::EnableOdom, this);
 
-  if (compact_data_) {
+  if (compact_data_) {//true
     pub_compact_data_ = nh.advertise<sensor_msgs::PointCloud2>("/compact_data", 2);
   } else {
     // advertise laser odometry topics

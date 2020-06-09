@@ -102,13 +102,13 @@ void PointProcessor::Process() {
 void PointProcessor::PointCloudHandler(const sensor_msgs::PointCloud2ConstPtr &raw_points_msg) {
 
   // fetch new input cloud
-  if (uneven_ == false) {
+  if (uneven_ == false) {//雷达在竖直方向上均匀分布
     PointCloud laser_cloud_in;
     pcl::fromROSMsg(*raw_points_msg, laser_cloud_in);
     PointCloudConstPtr laser_cloud_in_ptr(new PointCloud(laser_cloud_in));
 
     SetInputCloud(laser_cloud_in_ptr, raw_points_msg->header.stamp);
-  } else {
+  } else {//非均匀分布带有ring
     pcl::PointCloud<PointIR> laser_cloud_in;
     pcl::fromROSMsg(*raw_points_msg, laser_cloud_in);
     pcl::PointCloud<PointIR>::Ptr laser_cloud_in_ptr(new pcl::PointCloud<PointIR>(laser_cloud_in));
@@ -117,6 +117,7 @@ void PointProcessor::PointCloudHandler(const sensor_msgs::PointCloud2ConstPtr &r
   }
   Process();
 }
+
 
 void PointProcessor::SetupRos(ros::NodeHandle &nh) {
 
@@ -141,7 +142,7 @@ void PointProcessor::Reset(const ros::Time &scan_time, const bool &is_new_sweep)
   scan_time_ = scan_time;
 
   // clear internal cloud buffers at the beginning of a sweep
-  if (is_new_sweep) {
+  if (is_new_sweep) {//true
     sweep_start_ = scan_time_;
 
     // clear cloud buffers
@@ -183,7 +184,7 @@ void PointProcessor::SetInputCloud(const pcl::PointCloud<PointIR>::Ptr &cloud_in
 }
 
 void PointProcessor::PointToRing() {
-  if (uneven_ == false) {
+  if (uneven_ == false) {//均匀分布
     PointToRing(cloud_ptr_, laser_scans, intensity_scans);
   } else {
     PointToRing(cloud_ir_ptr_, laser_scans, intensity_scans);
@@ -248,7 +249,7 @@ void PointProcessor::PointToRing(const PointCloudConstPtr &cloud_in,
     float azi_rad = 2 * M_PI - atan2(p.y, p.x);
 
     ///>mine
-#ifndef DEBUG_ORIGIN
+#ifndef DEBUG_ORIGIN  //没有定义该宏,满足条件
     if (azi_rad >= 2 * M_PI) {
       azi_rad -= 2 * M_PI;
     }
@@ -274,7 +275,7 @@ void PointProcessor::PointToRing(const PointCloudConstPtr &cloud_in,
 //      p.intensity = scan_id;
 //    }
 
-    p.intensity = azi_rad;
+    p.intensity = azi_rad; //水平角
 #endif
     ///<mine
 
@@ -345,7 +346,7 @@ void PointProcessor::PointToRing(const PointCloudConstPtr &cloud_in,
   // start_ori_ = ring_out[0]->front().intensity;
 
   // infer right start_ori_
-  if (config_.infer_start_ori_) {
+  if (config_.infer_start_ori_) {//default: false
     std_msgs::Float32 start_ori_msg, start_ori_inferred_msg;
     start_ori_msg.data = start_ori_;
 
@@ -411,8 +412,8 @@ void PointProcessor::PointToRing(const PointCloudConstPtr &cloud_in,
 #ifndef DEBUG_ORIGIN
 
 #ifndef DEBUG
-      p.intensity = ring + rel_time;
-      p_with_intensity.intensity = int(p_with_intensity.intensity) + rel_time;
+      p.intensity = ring + rel_time; //ring + 时间比例
+      p_with_intensity.intensity = int(p_with_intensity.intensity) + rel_time; //强度值 + 时间比例
 #else
       p.intensity = rel_time;
 #endif
@@ -425,6 +426,7 @@ void PointProcessor::PointToRing(const PointCloudConstPtr &cloud_in,
 
 }
 
+//类似上面的PointToRing()函数
 void PointProcessor::PointToRing(const pcl::PointCloud<PointIR>::Ptr &cloud_in,
                                  vector<PointCloudPtr> &ring_out,
                                  vector<PointCloudPtr> &intensity_out) {
@@ -539,6 +541,7 @@ void PointProcessor::SetDeskew(bool deskew) {
   config_.deskew = deskew;
 }
 
+
 void PointProcessor::PrepareRing(const PointCloud &scan) {
   // const PointCloud &scan = laser_scans[idx_ring];
   size_t scan_size = scan.size();
@@ -560,14 +563,14 @@ void PointProcessor::PrepareRing(const PointCloud &scan) {
         // to closer point
         float weighted_diff = sqrt(CalcSquaredDiff(p_next, p_curr, depth_next / depth)) / depth_next;
         // relative distance
-        if (weighted_diff < 0.1) {
-          fill_n(&scan_ring_mask_[i - 0 - config_.num_curvature_regions], config_.num_curvature_regions + 1, 1);
+        if (weighted_diff < 0.1) { //curr和next挨得很近
+          fill_n(&scan_ring_mask_[i - 0 - config_.num_curvature_regions], config_.num_curvature_regions + 1, 1);//curr紧挨着之前的5个置为1
           continue;
         }
       } else {
         float weighted_diff = sqrt(CalcSquaredDiff(p_curr, p_next, depth / depth_next)) / depth;
         if (weighted_diff < 0.1) {
-          fill_n(&scan_ring_mask_[i - 0 + 1], config_.num_curvature_regions + 1, 1);
+          fill_n(&scan_ring_mask_[i - 0 + 1], config_.num_curvature_regions + 1, 1); //curr紧挨着之后的5个置为1
           continue;
         }
       }
@@ -613,7 +616,7 @@ void PointProcessor::PrepareSubregion(const PointCloud &scan, const size_t idx_s
 //    _regionSortIndices[regionIdx] = i;
   }
 
-  sort(curvature_idx_pairs_.begin(), curvature_idx_pairs_.end());
+  sort(curvature_idx_pairs_.begin(), curvature_idx_pairs_.end()); //升序
 
 //  for (const auto &pair : curvature_idx_pairs_) {
 //    cout << pair.first << " " << pair.second << endl;
@@ -649,7 +652,7 @@ void PointProcessor::ExtractFeaturePoints() {
   tic_toc_.Tic();
 
   ///< i is #ring, j is #subregion, k is # in region
-  for (size_t i = 0; i < num_rings_; ++i) {
+  for (size_t i = 0; i < num_rings_; ++i) {//对一帧数据提取四类特征点
 
     PointCloud::Ptr surf_points_less_flat_ptr(new PointCloud());
 
@@ -661,10 +664,11 @@ void PointProcessor::ExtractFeaturePoints() {
       continue;
     }
 
-    const PointCloud &scan_ring = *laser_scans[i];
+    const PointCloud &scan_ring = *laser_scans[i]; //强度值：ring + 时间比例
     size_t scan_size = scan_ring.size();
 
-    PrepareRing(scan_ring);
+    PrepareRing(scan_ring); //计算该线的scan_ring_mask_
+
 
     // extract features from equally sized scan regions
     for (int j = 0; j < config_.num_scan_subregions; ++j) {
@@ -680,13 +684,13 @@ void PointProcessor::ExtractFeaturePoints() {
       }
 
       size_t region_size = ep - sp + 1;
-      PrepareSubregion(scan_ring, sp, ep);
+      PrepareSubregion(scan_ring, sp, ep);//计算该线[sp, ep]区域points的曲率, curvature_idx_pairs_; 这个区域的subregion_labels_标志初始化为0
 
       // extract corner features
       int num_largest_picked = 0;
       for (size_t k = region_size; k > 0 && num_largest_picked < config_.max_corner_less_sharp;) {
         // k must be greater than 0
-        const pair<float, size_t> &curvature_idx = curvature_idx_pairs_[--k];
+        const pair<float, size_t> &curvature_idx = curvature_idx_pairs_[--k]; //从最大曲率处开始
         float curvature = curvature_idx.first;
         size_t idx = curvature_idx.second;
         size_t in_scan_idx = idx - 0; // scan start index is 0 for all ring scans
@@ -696,20 +700,20 @@ void PointProcessor::ExtractFeaturePoints() {
           ++num_largest_picked;
           if (num_largest_picked <= config_.max_corner_sharp) {
             subregion_labels_[in_region_idx] = CORNER_SHARP;
-            corner_points_sharp_.push_back(scan_ring[in_scan_idx]);
+            corner_points_sharp_.push_back(scan_ring[in_scan_idx]); //sharp corners, 标志为2
           } else {
             subregion_labels_[in_region_idx] = CORNER_LESS_SHARP;
           }
-          corner_points_less_sharp_.push_back(scan_ring[in_scan_idx]);
+          corner_points_less_sharp_.push_back(scan_ring[in_scan_idx]); //less sharp corners, 标志为1
 
-          MaskPickedInRing(scan_ring, in_scan_idx);
+          MaskPickedInRing(scan_ring, in_scan_idx); //scan_ring_mask_[in_scan_idx]附近10个点，相邻两个点挨得近的话置为1
         }
       }
 
       // extract flat surface features
       int num_smallest_picked = 0;
       for (int k = 0; k < region_size && num_smallest_picked < config_.max_surf_flat; ++k) {
-        const pair<float, size_t> &curvature_idx = curvature_idx_pairs_[k];
+        const pair<float, size_t> &curvature_idx = curvature_idx_pairs_[k]; //从最小曲率处开始
         float curvature = curvature_idx.first;
         size_t idx = curvature_idx.second;
         size_t in_scan_idx = idx - 0; // scan start index is 0 for all ring scans
@@ -718,7 +722,7 @@ void PointProcessor::ExtractFeaturePoints() {
         if (scan_ring_mask_[in_scan_idx] == 0 && curvature < config_.surf_curv_th) {
           ++num_smallest_picked;
           subregion_labels_[in_region_idx] = SURFACE_FLAT;
-          surface_points_flat_.push_back(scan_ring[in_scan_idx]);
+          surface_points_flat_.push_back(scan_ring[in_scan_idx]); //surf points, 标志为-1
 
           MaskPickedInRing(scan_ring, in_scan_idx);
         }
@@ -726,7 +730,7 @@ void PointProcessor::ExtractFeaturePoints() {
 
       // extract less flat surface features
       for (int k = 0; k < region_size; ++k) {
-        if (subregion_labels_[k] <= SURFACE_LESS_FLAT) {
+        if (subregion_labels_[k] <= SURFACE_LESS_FLAT) { //less surf points, 表示为0
           surf_points_less_flat_ptr->push_back(scan_ring[sp + k]);
         }
       }
@@ -751,10 +755,12 @@ void PointProcessor::ExtractFeaturePoints() {
     }
 
   } /// i
+   
+
 
   size_t less_flat_cloud_size = surface_points_less_flat_.size();
 
-  for (int i = 0; i < less_flat_cloud_size; ++i) {
+  for (int i = 0; i < less_flat_cloud_size; ++i) { //感觉是多余的，因为scan_ring的强度值已经为ring + 时间比例
     PointT &p = surface_points_less_flat_[i];
 
     float azi_rad = 2 * M_PI - atan2(p.y, p.x);
@@ -790,7 +796,7 @@ void PointProcessor::PublishResults() {
   }
   // publish full resolution and feature point clouds
   PublishCloudMsg(pub_full_cloud_, cloud_in_rings_, sweep_start_, config_.capture_frame_id);
-  PublishCloudMsg(pub_corner_points_sharp_, corner_points_sharp_, sweep_start_, config_.capture_frame_id);
+  PublishCloudMsg(pub_corner_points_sharp_, corner_points_sharp_, sweep_start_, config_.capture_frame_id); //4类特征点的强度值：ring + 时间比例
   PublishCloudMsg(pub_corner_points_less_sharp_, corner_points_less_sharp_, sweep_start_, config_.capture_frame_id);
   PublishCloudMsg(pub_surf_points_flat_, surface_points_flat_, sweep_start_, config_.capture_frame_id);
   PublishCloudMsg(pub_surf_points_less_flat_, surface_points_less_flat_, sweep_start_, config_.capture_frame_id);
