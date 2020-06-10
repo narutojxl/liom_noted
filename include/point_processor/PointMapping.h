@@ -112,7 +112,7 @@ class PointMapping {
 
  public:
   PointMapping(float scan_period = 0.1,
-               size_t num_max_iterations = 10);
+               size_t num_max_iterations = 30); //TODO默认值可以大一点 default: 10
 
   void SetupRos(ros::NodeHandle &nh, bool enable_sub = true);
   void Reset();
@@ -213,10 +213,10 @@ class PointMapping {
   bool new_laser_full_cloud_;     ///< flag if a new full resolution cloud has been received
   bool new_laser_odometry_;         ///< flag if a new laser odometry has been received
 
-  Transform transform_sum_;
-  Transform transform_tobe_mapped_;
-  Transform transform_bef_mapped_;
-  Transform transform_aft_mapped_;
+  Transform transform_sum_; //当前帧在odom
+  Transform transform_tobe_mapped_; //当前帧在map
+  Transform transform_bef_mapped_; //前一帧在odom
+  Transform transform_aft_mapped_; //前一帧在map
 
   pcl::VoxelGrid<pcl::PointXYZI> down_size_filter_corner_;   ///< voxel filter for down sizing corner clouds
   pcl::VoxelGrid<pcl::PointXYZI> down_size_filter_surf_;     ///< voxel filter for down sizing surface clouds

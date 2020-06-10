@@ -153,7 +153,7 @@ class Angle {
         cos_(other.cos_),
         sin_(other.sin_) {}
 
-  void operator=(const Angle &rhs) {
+  void operator=(const Angle &rhs) { //写的很简洁,学习
     radian_ = (rhs.radian_);
     cos_ = (rhs.cos_);
     sin_ = (rhs.sin_);
@@ -189,6 +189,7 @@ class Angle {
   float sin_;       ///< sine of the angle
 };
 
+//返回Jr(v)
 template<typename T>
 Eigen::Matrix<T, 3, 3> RightJacobian(const Eigen::Matrix<T, 3, 1> &v) {
 
@@ -203,7 +204,7 @@ Eigen::Matrix<T, 3, 3> RightJacobian(const Eigen::Matrix<T, 3, 1> &v) {
   }
 
   Eigen::Matrix<T, 3, 3> Jr
-      = I3x3 - ((1 - cos(v_norm)) / v_norm2) * v_skew + (v_norm - sin(v_norm)) / v_norm3 * v_skew * v_skew;
+      = I3x3 - ((1 - cos(v_norm)) / v_norm2) * v_skew + (v_norm - sin(v_norm)) / v_norm3 * v_skew * v_skew; //预积分paper式8
 
   return Jr;
 }
@@ -228,7 +229,7 @@ Eigen::Matrix<T, 3, 3> RightJacobianInverse(const Eigen::Matrix<T, 3, 1> &v) {
   }
 
   Eigen::Matrix<T, 3, 3> Jr_inv
-      = I3x3 + 0.5 * v_skew + (1 / v_norm2 - (1 + cos(v_norm)) / (2 * v_norm * sin(v_norm))) * v_skew * v_skew;
+      = I3x3 + 0.5 * v_skew + (1 / v_norm2 - (1 + cos(v_norm)) / (2 * v_norm * sin(v_norm))) * v_skew * v_skew; //预积分paper式8逆
   return Jr_inv;
 }
 
@@ -238,6 +239,7 @@ Eigen::Matrix<T, 3, 3> RightJacobianInverse(const Sophus::SO3<T> &R) {
   return Jr_inv;
 }
 
+//(Ra)对R的李代数求导
 template<typename T>
 Eigen::Matrix<T, 3, 3> RotationVectorJacobian(const Sophus::SO3<T> &R, const Eigen::Matrix<T, 3, 1> &a) {
 
@@ -246,17 +248,21 @@ Eigen::Matrix<T, 3, 3> RotationVectorJacobian(const Sophus::SO3<T> &R, const Eig
   return Jr;
 }
 
+//(R^T * a)对R的李代数求导
 //template<typename T>
 //Eigen::Matrix<T, 3, 3> RotationTransposeVectorJacobian(const Sophus::SO3<T> &R, const Eigen::Matrix<T, 3, 1> &a) {
 //
 //  typename Sophus::SO3<T>::Tangent v = R.log();
 //
 //  Eigen::Matrix<T, 3, 3> Jr = Sophus::SO3<T>::exp(-v).matrix() * Sophus::SO3<T>::hat(a) * RightJacobian<T>(-v);
+//  按照李代数求导定义可以推出来 =  R^T * a^ * Jr(-v)
+//                          = (R^T * a)^ * Jr(v)
+//                右扰动公式  = (R^T * a)^  
 //
 //  return Jr;
 //}
 
-/// these two should be equilavent
+/// these two should be equilavent 
 template<typename T>
 Eigen::Matrix<T, 3, 3> RotationTransposeVectorJacobian(const Sophus::SO3<T> &R, const Eigen::Matrix<T, 3, 1> &a) {
 
@@ -271,7 +277,7 @@ Eigen::Matrix<T, 3, 3> RotationTransposeVectorJacobian(const Sophus::SO3<T> &R, 
 template<typename T>
 Eigen::Matrix<T, 3, 3> RotationVectorJacobian(const Eigen::Matrix<T, 3, 3> &R, const Eigen::Matrix<T, 3, 1> &a) {
 
-  Eigen::Matrix<T, 3, 3> Jr = -R * Sophus::SO3<T>::hat(a);
+  Eigen::Matrix<T, 3, 3> Jr = -R * Sophus::SO3<T>::hat(a); //(Ra)对R的右扰动
 
   return Jr;
 }
@@ -280,7 +286,7 @@ template<typename T>
 Eigen::Matrix<T, 3, 3> RotationTransposeVectorJacobian(const Eigen::Matrix<T, 3, 3> &R,
                                                        const Eigen::Matrix<T, 3, 1> &a) {
 
-  Eigen::Matrix<T, 3, 3> Jr = Sophus::SO3<T>::hat(R.transpose() * a);
+  Eigen::Matrix<T, 3, 3> Jr = Sophus::SO3<T>::hat(R.transpose() * a); //(R^T * a)对R的右扰动
 
   return Jr;
 }

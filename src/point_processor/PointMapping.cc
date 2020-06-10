@@ -93,15 +93,15 @@ PointMapping::PointMapping(float scan_period,
       laser_cloud_corner_from_map_(new PointCloud()),
       laser_cloud_surf_from_map_(new PointCloud()) {
   // initialize mapping odometry and odometry tf messages
-  odom_aft_mapped_.header.frame_id = "/camera_init";
-  odom_aft_mapped_.child_frame_id = "/aft_mapped";
+  odom_aft_mapped_.header.frame_id = "/camera_init"; //应该是map
+  odom_aft_mapped_.child_frame_id = "/aft_mapped"; //应该像前端一样，是camera(laser)
 
   aft_mapped_trans_.frame_id_ = "/camera_init";
   aft_mapped_trans_.child_frame_id_ = "/aft_mapped";
 
   // initialize frame counter
-  frame_count_ = num_stack_frames_ - 1;
-  map_frame_count_ = num_map_frames_ - 1;
+  frame_count_ = num_stack_frames_ - 1; //0
+  map_frame_count_ = num_map_frames_ - 1; //4
 
   // setup cloud vectors
   laser_cloud_corner_array_.resize(laser_cloud_num_);
@@ -142,11 +142,11 @@ void PointMapping::SetupRos(ros::NodeHandle &nh, bool enable_sub) {
   /// for test
 //  pub_diff_odometry_ = nh.advertise<nav_msgs::Odometry>("/laser_odom_to_last", 5);
 
-  if (enable_sub) {
+  if (enable_sub) {//true
 
-    if (compact_data_) {
+    if (compact_data_) {//true
       sub_compact_data_ =
-          nh.subscribe<sensor_msgs::PointCloud2>("/compact_data", 2, &PointMapping::CompactDataHandler, this);
+          nh.subscribe<sensor_msgs::PointCloud2>("/compact_data", 2, &PointMapping::CompactDataHandler, this); //前端发布
     } else {
       // subscribe to scan registration topics
       sub_laser_cloud_corner_last_ = nh.subscribe<sensor_msgs::PointCloud2>
@@ -215,9 +215,9 @@ void PointMapping::CompactDataHandler(const sensor_msgs::PointCloud2ConstPtr &co
     for (size_t i = 3; i < compact_point_size; ++i) {
       const PointT &p = compact_points[i];
       if (i < 3 + corner_size) {
-        laser_cloud_corner_last_->push_back(p);
+        laser_cloud_corner_last_->push_back(p); //当前帧less sharp points
       } else if (i >= 3 + corner_size && i < 3 + corner_size + surf_size) {
-        laser_cloud_surf_last_->push_back(p);
+        laser_cloud_surf_last_->push_back(p); //当前帧less flat points
       } else {
         full_cloud_->push_back(p);
       }
@@ -380,10 +380,10 @@ void PointMapping::OptimizeTransformTobeMapped() {
 
     for (int i = 0; i < laser_cloud_corner_stack_size; ++i) {
       point_ori = laser_cloud_corner_stack_downsampled_->points[i];
-      PointAssociateToMap(point_ori, point_sel, transform_tobe_mapped_);
+      PointAssociateToMap(point_ori, point_sel, transform_tobe_mapped_); //转换到map下
       kdtree_corner_from_map->nearestKSearch(point_sel, 5, point_search_idx, point_search_sq_dis);
 
-      if (point_search_sq_dis[4] < min_match_sq_dis_) {
+      if (point_search_sq_dis[4] < min_match_sq_dis_) {//1.0
 //        Vector3Intl vc(0, 0, 0);
         Eigen::Vector3f vc(0, 0, 0);
 
@@ -425,16 +425,16 @@ void PointMapping::OptimizeTransformTobeMapped() {
           float x0 = point_sel.x;
           float y0 = point_sel.y;
           float z0 = point_sel.z;
-          float x1 = vc.x() + 0.1 * mat_V1(0, 2);
+          float x1 = vc.x() + 0.1 * mat_V1(0, 2); 
           float y1 = vc.y() + 0.1 * mat_V1(1, 2);
           float z1 = vc.z() + 0.1 * mat_V1(2, 2);
           float x2 = vc.x() - 0.1 * mat_V1(0, 2);
           float y2 = vc.y() - 0.1 * mat_V1(1, 2);
           float z2 = vc.z() - 0.1 * mat_V1(2, 2);
 
-          Eigen::Vector3f X0(x0, y0, z0);
-          Eigen::Vector3f X1(x1, y1, z1);
-          Eigen::Vector3f X2(x2, y2, z2);
+          Eigen::Vector3f X0(x0, y0, z0); //i
+          Eigen::Vector3f X1(x1, y1, z1); //j
+          Eigen::Vector3f X2(x2, y2, z2); //l
 
           // NOTE: to make sure on a line with the same as eigen vector
 
@@ -460,17 +460,17 @@ void PointMapping::OptimizeTransformTobeMapped() {
 
           Eigen::Vector3f a012_vec = (X0 - X1).cross(X0 - X2);
 
-          Eigen::Vector3f normal_to_point = ((X1 - X2).cross(a012_vec)).normalized();
+          Eigen::Vector3f normal_to_point = ((X1  - X2).cross(a012_vec)).normalized(); //化简之后和lins中公式一样
 
           float a012 = a012_vec.norm();
 
           float l12 = (X1 - X2).norm();
 
-          float la = normal_to_point.x();
-          float lb = normal_to_point.y();
-          float lc = normal_to_point.z();
+          float la = normal_to_point.x(); //距离对pi_x雅克比
+          float lb = normal_to_point.y(); //对pi_y
+          float lc = normal_to_point.z(); //对pi_z
 
-          float ld2 = a012 / l12;
+          float ld2 = a012 / l12; //点到直线的距离
 
           float s = 1 - 0.9f * fabs(ld2);
 
@@ -554,7 +554,7 @@ void PointMapping::OptimizeTransformTobeMapped() {
 
           float s = 1 - 0.9f * fabs(pd2) / sqrt(CalcPointDistance(point_sel));
 
-          if (pd2 > 0) {
+          if (pd2 > 0) {//TODO: lego_loam中没有对pd2判断
             coeff.x = s * pa;
             coeff.y = s * pb;
             coeff.z = s * pc;
@@ -627,9 +627,9 @@ void PointMapping::OptimizeTransformTobeMapped() {
       Eigen::Vector3f p(point_ori.x, point_ori.y, point_ori.z);
       Eigen::Vector3f w(coeff.x, coeff.y, coeff.z);
 
-//      Eigen::Vector3f J_r = w.transpose() * RotationVectorJacobian(R_SO3, p);
-      Eigen::Vector3f J_r = -w.transpose() * (transform_tobe_mapped_.rot * SkewSymmetric(p));
-      Eigen::Vector3f J_t = w.transpose();
+//    Eigen::Vector3f J_r = w.transpose() * RotationVectorJacobian(R_SO3, p);
+      Eigen::Vector3f J_r = -w.transpose() * (transform_tobe_mapped_.rot * SkewSymmetric(p));//(Rp + t)对R的右扰动：-Rp^
+      Eigen::Vector3f J_t = w.transpose(); //跟lins中StateEstimator.hpp::calculateTransformation()
 
       float d2 = coeff.intensity;
 
@@ -682,7 +682,7 @@ void PointMapping::OptimizeTransformTobeMapped() {
 
     Eigen::Vector3f r_so3 = R_SO3.log();
 
-    r_so3.x() += mat_X(0, 0);
+    r_so3.x() += mat_X(0, 0); //旋转部分用李代数表示
     r_so3.y() += mat_X(1, 0);
     r_so3.z() += mat_X(2, 0);
     transform_tobe_mapped_.pos.x() += mat_X(3, 0);
@@ -753,8 +753,10 @@ void PointMapping::OptimizeTransformTobeMapped() {
 }
 
 void PointMapping::TransformAssociateToMap() {
-  Transform transform_incre(transform_bef_mapped_.inverse() * transform_sum_.transform());
-  transform_tobe_mapped_ = transform_tobe_mapped_ * transform_incre;
+  Transform transform_incre(transform_bef_mapped_.inverse() * transform_sum_.transform()); 
+  transform_tobe_mapped_ = transform_aft_mapped_ * transform_incre; 
+  //TODO default: transform_tobe_mapped_ = transform_tobe_mapped_ * transform_incre; 
+  //得到当前帧在map下的初值
 }
 
 void PointMapping::TransformUpdate() {
@@ -762,6 +764,8 @@ void PointMapping::TransformUpdate() {
   transform_aft_mapped_ = transform_tobe_mapped_;
 }
 
+
+//主入口
 void PointMapping::Process() {
   if (!HasNewData()) {
     // waiting for new data to arrive...
@@ -781,21 +785,23 @@ void PointMapping::Process() {
 
   // relate incoming data to map
   // WARNING
-  if (!imu_inited_) {
+  if (!imu_inited_) {//true
     TransformAssociateToMap();
   }
+  
+  //在上次帧末尾laser_cloud_corner_stack_, laser_cloud_surf_stack_ 都均被clear清空
 
   // NOTE: the stack points are the last corner or surf poitns
   size_t laser_cloud_corner_last_size = laser_cloud_corner_last_->points.size();
   for (int i = 0; i < laser_cloud_corner_last_size; i++) {
     PointAssociateToMap(laser_cloud_corner_last_->points[i], point_sel, transform_tobe_mapped_);
-    laser_cloud_corner_stack_->push_back(point_sel);
+    laser_cloud_corner_stack_->push_back(point_sel); //当前帧less sharp points由初值转换到map下
   }
 
   size_t laser_cloud_surf_last_size = laser_cloud_surf_last_->points.size();
   for (int i = 0; i < laser_cloud_surf_last_size; i++) {
     PointAssociateToMap(laser_cloud_surf_last_->points[i], point_sel, transform_tobe_mapped_);
-    laser_cloud_surf_stack_->push_back(point_sel);
+    laser_cloud_surf_stack_->push_back(point_sel); //当前帧less flat points由初值转换到map下
   }
 
   // NOTE: above codes update the transform with incremental value and update them to the map coordinate
@@ -803,12 +809,12 @@ void PointMapping::Process() {
   point_on_z_axis_.x = 0.0;
   point_on_z_axis_.y = 0.0;
   point_on_z_axis_.z = 10.0;
-  PointAssociateToMap(point_on_z_axis_, point_on_z_axis_, transform_tobe_mapped_);
+  PointAssociateToMap(point_on_z_axis_, point_on_z_axis_, transform_tobe_mapped_); //(0,0,10)点由初值转换到map下
 
   // NOTE: in which cube
-  int center_cube_i = int((transform_tobe_mapped_.pos.x() + 25.0) / 50.0) + laser_cloud_cen_length_;
-  int center_cube_j = int((transform_tobe_mapped_.pos.y() + 25.0) / 50.0) + laser_cloud_cen_width_;
-  int center_cube_k = int((transform_tobe_mapped_.pos.z() + 25.0) / 50.0) + laser_cloud_cen_height_;
+  int center_cube_i = int((transform_tobe_mapped_.pos.x() + 25.0) / 50.0) + laser_cloud_cen_length_; //10
+  int center_cube_j = int((transform_tobe_mapped_.pos.y() + 25.0) / 50.0) + laser_cloud_cen_width_;  //10
+  int center_cube_k = int((transform_tobe_mapped_.pos.z() + 25.0) / 50.0) + laser_cloud_cen_height_; //5
 
   // NOTE: negative index
   if (transform_tobe_mapped_.pos.x() + 25.0 < 0) --center_cube_i;
@@ -816,6 +822,9 @@ void PointMapping::Process() {
   if (transform_tobe_mapped_.pos.z() + 25.0 < 0) --center_cube_k;
 
 //  DLOG(INFO) << "center_before: " << center_cube_i << " " << center_cube_j << " " << center_cube_k;
+
+  //* laser_cloud_corner_array_和laser_cloud_surf_array_在UpdateMapDatabase()函数里填充内容
+
   {
     while (center_cube_i < 3) {
       for (int j = 0; j < laser_cloud_width_; ++j) {
@@ -921,8 +930,6 @@ void PointMapping::Process() {
   }
 
   // NOTE: above slide cubes
-
-
   laser_cloud_valid_idx_.clear();
   laser_cloud_surround_idx_.clear();
 
@@ -996,19 +1003,21 @@ void PointMapping::Process() {
     *laser_cloud_surf_from_map_ += *laser_cloud_surf_array_[laser_cloud_valid_idx_[i]];
   }
 
+  //TODO: 上面的loam代码是为了得到local map, 未看懂
+
   // prepare feature stack clouds for pose optimization
   size_t laser_cloud_corner_stack_size2 = laser_cloud_corner_stack_->points.size();
   for (int i = 0; i < laser_cloud_corner_stack_size2; ++i) {
     PointAssociateTobeMapped(laser_cloud_corner_stack_->points[i],
                              laser_cloud_corner_stack_->points[i],
-                             transform_tobe_mapped_);
+                             transform_tobe_mapped_); //把在map下points转换到当前帧下
   }
 
   size_t laserCloudSurfStackNum2 = laser_cloud_surf_stack_->points.size();
   for (int i = 0; i < laserCloudSurfStackNum2; ++i) {
     PointAssociateTobeMapped(laser_cloud_surf_stack_->points[i],
                              laser_cloud_surf_stack_->points[i],
-                             transform_tobe_mapped_);
+                             transform_tobe_mapped_);//同上
   }
 
   // down sample feature stack clouds
@@ -1030,7 +1039,7 @@ void PointMapping::Process() {
   // NOTE: run pose optimization
   OptimizeTransformTobeMapped();
 
-  if (!imu_inited_) {
+  if (!imu_inited_) {//true
     // store down sized corner stack points in corresponding cube clouds
 
     CubeCenter cube_center;
@@ -1042,7 +1051,7 @@ void PointMapping::Process() {
                       laser_cloud_surf_stack_downsampled_,
                       laser_cloud_valid_idx_,
                       transform_tobe_mapped_,
-                      cube_center);
+                      cube_center); //TODO 未看懂
 #if 0
     for (int i = 0; i < laser_cloud_corner_stack_ds_size; ++i) {
       PointAssociateToMap(laser_cloud_corner_stack_downsampled_->points[i], point_sel, transform_tobe_mapped_);
@@ -1135,7 +1144,7 @@ void PointMapping::UpdateMapDatabase(lio::PointCloudPtr margin_corner_stack_down
         cube_j >= 0 && cube_j < laser_cloud_width_ &&
         cube_k >= 0 && cube_k < laser_cloud_height_) {
       size_t cube_idx = ToIndex(cube_i, cube_j, cube_k);
-      laser_cloud_corner_array_[cube_idx]->push_back(point_sel);
+      laser_cloud_corner_array_[cube_idx]->push_back(point_sel); //填充内容
     }
   }
 
@@ -1155,7 +1164,7 @@ void PointMapping::UpdateMapDatabase(lio::PointCloudPtr margin_corner_stack_down
         cube_j >= 0 && cube_j < laser_cloud_width_ &&
         cube_k >= 0 && cube_k < laser_cloud_height_) {
       size_t cube_idx = ToIndex(cube_i, cube_j, cube_k);
-      laser_cloud_surf_array_[cube_idx]->push_back(point_sel);
+      laser_cloud_surf_array_[cube_idx]->push_back(point_sel); //填充内容
     }
   }
 

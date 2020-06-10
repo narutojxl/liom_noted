@@ -87,8 +87,8 @@ PointOdometry::PointOdometry(float scan_period, int io_ratio, size_t num_max_ite
 
   // adapted from LOAM
   // initialize odometry and odometry tf messages
-  laser_odometry_msg_.header.frame_id = "/camera_init";
-  laser_odometry_msg_.child_frame_id = "/laser_odom";
+  laser_odometry_msg_.header.frame_id = "/camera_init"; //就是odom
+  laser_odometry_msg_.child_frame_id = "/laser_odom";  //就是camera(laser)
 
   laser_odometry_trans_.frame_id_ = "/camera_init";
   // laser_odometry_trans_.child_frame_id_ = "/laser_odom";
@@ -545,7 +545,7 @@ void PointOdometry::Process() {
         Eigen::Matrix<float, 6, 6> mat_AtA;
         Eigen::VectorXf mat_B(num_point_sel);
         Eigen::Matrix<float, 6, 1> mat_AtB;
-        Eigen::Matrix<float, 6, 1> mat_X;
+        Eigen::Matrix<float, 6, 1> mat_X; 
 
         SO3 R_SO3(transform_es_.rot); /// SO3
 
@@ -556,13 +556,12 @@ void PointOdometry::Process() {
           Eigen::Vector3f w(coeff.x, coeff.y, coeff.z);
           Eigen::Vector3f p_minus_t = p - transform_es_.pos;
 
-//        Eigen::Vector3f J_r = w.transpose() * RotationTransposeVectorJacobian(R_SO3, p_minus_t);
-          Eigen::Vector3f J_r = w.transpose() * SkewSymmetric (transform_es_.rot.conjugate() * p_minus_t); //作者使用的是左扰动公式
+//        Eigen::Vector3f J_r = w.transpose() * RotationTransposeVectorJacobian(R_SO3, p_minus_t); //李代数求导
+          Eigen::Vector3f J_r = w.transpose() * SkewSymmetric (transform_es_.rot.conjugate() * p_minus_t); //右扰动公式
           Eigen::Vector3f J_t = -w.transpose() * transform_es_.rot.toRotationMatrix().transpose();
-          //p0 = R^T(p - t), 
-          //p0对R偏导(右扰动) = R^T * (p - t)^
-          //p0对R偏导(左扰动) = [ R^T *(p - t) ]^
-          //p0对t偏导 = p0对(p-t)偏导 * (p-t)对ｔ偏导
+          //p0 = R^T(p - t) 
+          //p0对R偏导(右扰动) = [ R^T *(p - t) ]^
+          //p0对t偏导 = p0对(p-t)偏导 * (p-t)对ｔ偏导　＝　R^T * (-I)
 
           // float s = 1;
 
@@ -624,7 +623,7 @@ void PointOdometry::Process() {
 
         Eigen::Vector3f r_so3 = R_SO3.log();
 
-        r_so3.x() += mat_X(0, 0);
+        r_so3.x() += mat_X(0, 0); //旋转部分用李代数表示
         r_so3.y() += mat_X(1, 0);
         r_so3.z() += mat_X(2, 0);
 
@@ -770,12 +769,12 @@ void PointOdometry::PublishResults() {
         compact_data += (*full_cloud_);
       }
 
-      PublishCloudMsg(pub_compact_data_, compact_data, sweepTime, "/camera");
+      PublishCloudMsg(pub_compact_data_, compact_data, sweepTime, "/camera"); //camera：laser坐标系
 
       ROS_DEBUG_STREAM("encode compact data and publish time: " << tic_toc_encoder.Toc() << " ms");
     } else {
-      PublishCloudMsg(pub_laser_cloud_corner_last_, *last_corner_cloud_, sweepTime, "/camera");
-      PublishCloudMsg(pub_laser_cloud_surf_last_, *last_surf_cloud_, sweepTime, "/camera");
+      PublishCloudMsg(pub_laser_cloud_corner_last_, *last_corner_cloud_, sweepTime, "/camera"); //less sharp
+      PublishCloudMsg(pub_laser_cloud_surf_last_, *last_surf_cloud_, sweepTime, "/camera"); //less flat
       PublishCloudMsg(pub_full_cloud_, *full_cloud_, sweepTime, "/camera");
     }
   }

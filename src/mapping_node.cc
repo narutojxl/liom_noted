@@ -58,7 +58,7 @@ int main(int argc, char **argv) {
 
   ros::init(argc, argv, "point_mapping");
 
-  ros::NodeHandle nh("~");;
+  ros::NodeHandle nh("~");
 
   PointMapping mapper;
   mapper.SetupRos(nh);
