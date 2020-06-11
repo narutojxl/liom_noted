@@ -201,7 +201,7 @@ void PointOdometry::LaserFullCloudHandler(const sensor_msgs::PointCloud2ConstPtr
   full_cloud_->clear();
   pcl::fromROSMsg(*full_cloud_msg, *full_cloud_);
   std::vector<int> indices;
-  pcl::removeNaNFromPointCloud(*full_cloud_, *full_cloud_, indices);
+  pcl::removeNaNFromPointCloud(*full_cloud_, *full_cloud_, indices); //一帧laser(所有线)
   new_full_cloud_ = true;
 }
 
@@ -733,7 +733,7 @@ void PointOdometry::PublishResults() {
   if (io_ratio_ < 2 || frame_count_ % io_ratio_ == 1) {
 
     ros::Time sweepTime = time_corner_points_sharp_;
-    if (enable_odom_) {
+    if (enable_odom_) {//true
       TransformToEnd(full_cloud_);  // transform full resolution cloud to sweep end before sending it
     }
 
@@ -761,7 +761,7 @@ void PointOdometry::PublishResults() {
       {
         compact_point.x = last_corner_cloud_->size(); //curr less sharp points
         compact_point.y = last_surf_cloud_->size(); //curr less surf points
-        compact_point.z = full_cloud_->size();
+        compact_point.z = full_cloud_->size(); //curr laser帧(所有线)
         compact_data.push_back(compact_point);
 
         compact_data += (*last_corner_cloud_);

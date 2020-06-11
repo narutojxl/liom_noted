@@ -795,7 +795,7 @@ void PointProcessor::PublishResults() {
     return;
   }
   // publish full resolution and feature point clouds
-  PublishCloudMsg(pub_full_cloud_, cloud_in_rings_, sweep_start_, config_.capture_frame_id);
+  PublishCloudMsg(pub_full_cloud_, cloud_in_rings_, sweep_start_, config_.capture_frame_id); //一帧laser(所有线)
   PublishCloudMsg(pub_corner_points_sharp_, corner_points_sharp_, sweep_start_, config_.capture_frame_id); //4类特征点的强度值：ring + 时间比例
   PublishCloudMsg(pub_corner_points_less_sharp_, corner_points_less_sharp_, sweep_start_, config_.capture_frame_id);
   PublishCloudMsg(pub_surf_points_flat_, surface_points_flat_, sweep_start_, config_.capture_frame_id);

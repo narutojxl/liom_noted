@@ -286,7 +286,7 @@ class Estimator : public MeasurementManager, public PointMapping {
   double g_norm_;
   bool gravity_fixed_ = false;
 
-  Transform transform_tobe_mapped_bef_;
+  Transform transform_tobe_mapped_bef_; //后端计算的curr在map下的位姿
   Transform transform_es_;
 
   // for marginalization

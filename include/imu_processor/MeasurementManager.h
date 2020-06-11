@@ -73,8 +73,8 @@ typedef vector<PairMeasurement> PairMeasurements;
 struct MeasurementManagerConfig {
   string imu_topic = "/imu/data";
   string laser_topic = "/velodyne_points";
-  string laser_odom_topic = "/aft_mapped_to_init"; // NOTE: Check if the time is too long
-  string compact_data_topic = "/compact_data"; // NOTE: Check if the time is too long
+  string laser_odom_topic = "/aft_mapped_to_init"; // NOTE: Check if the time is too long  在map下的位姿，由后端mapping发布
+  string compact_data_topic = "/compact_data"; // NOTE: Check if the time is too long  由前端发布的在odom下的位姿和less sharp points， less flat points, curr laser帧(所有线)
   double msg_time_delay = 0;
   bool enable_imu = true;
 };
@@ -98,7 +98,7 @@ class MeasurementManager {
   mutex state_mutex_;
   mutex thread_mutex_;
   std::condition_variable con_;
-  queue<ImuMsgConstPtr> imu_buf_;
+  queue<ImuMsgConstPtr> imu_buf_; //队列, 时间戳小的在前
   queue<OdomMsgConstPtr> laser_odom_buf_;
   queue<CompactDataConstPtr> compact_data_buf_;
 

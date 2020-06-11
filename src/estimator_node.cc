@@ -95,6 +95,7 @@ void Run() {
     cv::cv2eigen(cv_T, eigen_T);
 
     estimator_config.transform_lb = Transform{Eigen::Quaternionf(eigen_R.cast<float>()), eigen_T.cast<float>()};
+    //laser to body(imu)
 
     tmp_int = fs_settings["run_optimization"];
     estimator_config.run_optimization = (tmp_int > 0);
@@ -103,13 +104,13 @@ void Run() {
     tmp_int = fs_settings["gravity_fix"];
     estimator_config.gravity_fix = (tmp_int > 0);
     tmp_int = fs_settings["plane_projection_factor"];
-    estimator_config.plane_projection_factor = (tmp_int > 0);
+    estimator_config.plane_projection_factor = (tmp_int > 0); //false
     tmp_int = fs_settings["imu_factor"];
     estimator_config.imu_factor = (tmp_int > 0);
     tmp_int = fs_settings["point_distance_factor"];
     estimator_config.point_distance_factor = (tmp_int > 0);
     tmp_int = fs_settings["prior_factor"];
-    estimator_config.prior_factor = (tmp_int > 0);
+    estimator_config.prior_factor = (tmp_int > 0); //false
     tmp_int = fs_settings["marginalization_factor"];
     estimator_config.marginalization_factor = (tmp_int > 0);
 
@@ -119,7 +120,7 @@ void Run() {
     tmp_int = fs_settings["enable_deskew"];
     estimator_config.enable_deskew = (tmp_int > 0);
     tmp_int = fs_settings["cutoff_deskew"];
-    estimator_config.cutoff_deskew = (tmp_int > 0);
+    estimator_config.cutoff_deskew = (tmp_int > 0); //false
 
     tmp_int = fs_settings["keep_features"];
     estimator_config.keep_features = (tmp_int > 0);
@@ -144,16 +145,16 @@ void Run() {
 
   int odom_io = fs_settings["odom_io"];
 
-  PointOdometry odometry(0.1, odom_io);
+  PointOdometry odometry(0.1, odom_io); //laser 10hz(0.1s)
   odometry.SetupRos(*nh_ptr);
   odometry.Reset();
 
-  thread odom(&PointOdometry::Spin, &odometry);
+  thread odom(&PointOdometry::Spin, &odometry); //用线程的形式开启前端
 
-  thread measurement_manager(&Estimator::ProcessEstimation, &estimator);
+  thread measurement_manager(&Estimator::ProcessEstimation, &estimator); //后端和imu处理入口
 
   if (estimator_config.pcl_viewer) {
-    boost::thread visualizer(boost::bind(&PlaneNormalVisualizer::Spin, &(estimator.normal_vis)));
+    boost::thread visualizer(boost::bind(&PlaneNormalVisualizer::Spin, &(estimator.normal_vis))); //TODO 待看
   }
 
 //  while (!estimator.normal_vis.viewer->wasStopped()) {

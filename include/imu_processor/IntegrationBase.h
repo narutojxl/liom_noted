@@ -90,12 +90,12 @@ class IntegrationBase {
         delta_q_{Quaterniond::Identity()},
         delta_v_{Vector3d::Zero()} {
     config_ = config;
-    g_vec_ = Vector3d(0, 0, -config_.g_norm);
-    noise_ = Matrix<double, 18, 18>::Zero();
+    g_vec_ = Vector3d(0, 0, -config_.g_norm); //ENU型
+    noise_ = Matrix<double, 18, 18>::Zero(); //TODO 18维？
     noise_.block<3, 3>(0, 0) = (config_.acc_n * config_.acc_n) * Matrix3d::Identity();
     noise_.block<3, 3>(3, 3) = (config_.gyr_n * config_.gyr_n) * Matrix3d::Identity();
-    noise_.block<3, 3>(6, 6) = (config_.acc_n * config_.acc_n) * Matrix3d::Identity();
-    noise_.block<3, 3>(9, 9) = (config_.gyr_n * config_.gyr_n) * Matrix3d::Identity();
+    noise_.block<3, 3>(6, 6) = (config_.acc_n * config_.acc_n) * Matrix3d::Identity(); //TODO为何重复放
+    noise_.block<3, 3>(9, 9) = (config_.gyr_n * config_.gyr_n) * Matrix3d::Identity(); //TODO为何重复放
     noise_.block<3, 3>(12, 12) = (config_.acc_w * config_.acc_w) * Matrix3d::Identity();
     noise_.block<3, 3>(15, 15) = (config_.gyr_w * config_.gyr_w) * Matrix3d::Identity();
   }

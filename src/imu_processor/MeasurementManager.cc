@@ -51,6 +51,7 @@ void MeasurementManager::SetupRos(ros::NodeHandle &nh) {
 //      nh_.subscribe<nav_msgs::Odometry>(mm_config_.laser_odom_topic, 10, &MeasurementManager::LaserOdomHandler, this);
 }
 
+//不断地把在回调函数中前端发布的"/compact_data" topic(laser和odom), 和imu measurements, 组织成一个pair vector返回
 PairMeasurements MeasurementManager::GetMeasurements() {
 
   PairMeasurements measurements;
@@ -64,26 +65,27 @@ PairMeasurements MeasurementManager::GetMeasurements() {
       }
 
       if (imu_buf_.back()->header.stamp.toSec()
-          <= compact_data_buf_.front()->header.stamp.toSec() + mm_config_.msg_time_delay) {
+          <= compact_data_buf_.front()->header.stamp.toSec() + mm_config_.msg_time_delay) {//0
         //ROS_DEBUG("wait for imu, only should happen at the beginning");
         // Count for waiting time
         return measurements;
       }
 
       if (imu_buf_.front()->header.stamp.toSec()
-          >= compact_data_buf_.front()->header.stamp.toSec() + mm_config_.msg_time_delay) {
+          >= compact_data_buf_.front()->header.stamp.toSec() + mm_config_.msg_time_delay) {//0
         ROS_DEBUG("throw compact_data, only should happen at the beginning");
         compact_data_buf_.pop();
         continue;
       }
+      //找到laser队首时间戳大于imu队首时间戳的laser帧
       CompactDataConstPtr compact_data_msg = compact_data_buf_.front();
-      compact_data_buf_.pop();
+      compact_data_buf_.pop(); //不pop的话，回调函数会把该队列撑爆
 
       vector<sensor_msgs::ImuConstPtr> imu_measurements;
       while (imu_buf_.front()->header.stamp.toSec()
-          < compact_data_msg->header.stamp.toSec() + mm_config_.msg_time_delay) {
-        imu_measurements.emplace_back(imu_buf_.front());
-        imu_buf_.pop();
+          < compact_data_msg->header.stamp.toSec() + mm_config_.msg_time_delay) {//0
+        imu_measurements.emplace_back(imu_buf_.front()); //相比push_back，不会发生拷贝
+        imu_buf_.pop();//同上
       }
 
       // NOTE: one message after laser odom msg
@@ -92,7 +94,7 @@ PairMeasurements MeasurementManager::GetMeasurements() {
       if (imu_measurements.empty()) {
         ROS_DEBUG("no imu between two image");
       }
-      measurements.emplace_back(imu_measurements, compact_data_msg);
+      measurements.emplace_back(imu_measurements, compact_data_msg);//除了最后一个imu时间戳大于该laser时间戳，其他的imus都小于
     } else {
       vector<sensor_msgs::ImuConstPtr> imu_measurements;
       if (compact_data_buf_.empty()) {
@@ -103,6 +105,7 @@ PairMeasurements MeasurementManager::GetMeasurements() {
       measurements.emplace_back(imu_measurements, compact_data_msg);
     }
 
+    //一次循环结束，next
   }
 
 }

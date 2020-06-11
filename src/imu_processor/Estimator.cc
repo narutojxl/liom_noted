@@ -195,7 +195,7 @@ void Estimator::SetupAllEstimatorConfig(const EstimatorConfig &config, const Mea
   min_plane_dis_ = config.min_plane_dis;
   extrinsic_stage_ = config.estimate_extrinsic;
 
-  if (!config.imu_factor) {
+  if (!config.imu_factor) {//config.imu_factor == true,见配置文件
     this->mm_config_.enable_imu = false;
     if (!first_imu_) {
       first_imu_ = true;
@@ -282,7 +282,7 @@ void Estimator::ClearState() {
   Q_WI_ = R_WI_;
 
   // WARNING: g_norm should be set before clear
-  g_norm_ = tmp_pre_integration_->config_.g_norm;
+  g_norm_ = tmp_pre_integration_->config_.g_norm; //9.8
 
   convergence_flag_ = false;
 }
@@ -335,11 +335,13 @@ void Estimator::SetupRos(ros::NodeHandle &nh) {
   pub_extrinsic_ = nh.advertise<geometry_msgs::PoseStamped>("/extrinsic_lb", 10);
 }
 
+
+
 void Estimator::ProcessImu(double dt,
                            const Vector3d &linear_acceleration,
                            const Vector3d &angular_velocity,
                            const std_msgs::Header &header) {
-  if (!first_imu_) {
+  if (!first_imu_) {//第一帧imu要执行,其他帧imu不执行
     first_imu_ = true;
     acc_last_ = linear_acceleration;
     gyr_last_ = angular_velocity;
@@ -376,9 +378,9 @@ void Estimator::ProcessImu(double dt,
 //  }
 
   // NOTE: Do not update tmp_pre_integration_ until first laser comes
-  if (cir_buf_count_ != 0) {
+  if (cir_buf_count_ != 0) {//已经处理了第一帧laser
 
-    tmp_pre_integration_->push_back(dt, linear_acceleration, angular_velocity);
+    tmp_pre_integration_->push_back(dt, linear_acceleration, angular_velocity); //用当前的imu数据做一次progagate
 
     dt_buf_[cir_buf_count_].push_back(dt);
     linear_acceleration_buf_[cir_buf_count_].push_back(linear_acceleration);
@@ -403,7 +405,7 @@ void Estimator::ProcessImu(double dt,
   acc_last_ = linear_acceleration;
   gyr_last_ = angular_velocity;
 
-  if (stage_flag_ == INITED) {
+  if (stage_flag_ == INITED) {//已经处理了滑窗大小个laser帧，且已经初始化成功
     predict_odom_.header.stamp = header.stamp;
     predict_odom_.header.seq += 1;
     Eigen::Quaterniond quat(Rs_.last());
@@ -428,15 +430,21 @@ void Estimator::ProcessImu(double dt,
 
 // TODO: this function can be simplified
 void Estimator::ProcessLaserOdom(const Transform &transform_in, const std_msgs::Header &header) {
+  //未初始化阶段：
+  //transform_in: 上一帧laser在map下位姿
+  //已经初始化阶段：
+  //???
 
   ROS_DEBUG(">>>>>>> new laser odom coming <<<<<<<");
 
-  ++laser_odom_recv_count_;
+  ++laser_odom_recv_count_; //TODO有溢出的危险
 
   if (stage_flag_ != INITED
       && laser_odom_recv_count_ % estimator_config_.init_window_factor != 0) { /// better for initialization
     return;
   }
+
+  //已经初始化 或者 未初始化阶段，余数 == 0
 
   Headers_.push(header);
 
@@ -445,8 +453,8 @@ void Estimator::ProcessLaserOdom(const Transform &transform_in, const std_msgs::
 
   LaserTransform laser_transform(header.stamp.toSec(), transform_in);
 
-  laser_transform.pre_integration = tmp_pre_integration_;
-  pre_integrations_.push(tmp_pre_integration_);
+  laser_transform.pre_integration = tmp_pre_integration_; //tmp_pre_integration_: 存的是last帧和curr帧之间的imu数据，而且已经对每个imu做了预积分，在ProcessImu()中
+  pre_integrations_.push(tmp_pre_integration_); //压到buffer中
 
   // reset tmp_pre_integration_
   tmp_pre_integration_.reset();
@@ -456,7 +464,7 @@ void Estimator::ProcessLaserOdom(const Transform &transform_in, const std_msgs::
                                                                            Bgs_[cir_buf_count_],
                                                                            estimator_config_.pim_config));
 
-  all_laser_transforms_.push(make_pair(header.stamp.toSec(), laser_transform));
+  all_laser_transforms_.push(make_pair(header.stamp.toSec(), laser_transform)); //存的是当前帧的位姿 +　last帧到curr帧的imu数据，包括对这些imu数据的预积分
 
 
 
@@ -465,13 +473,14 @@ void Estimator::ProcessLaserOdom(const Transform &transform_in, const std_msgs::
   // NOTE: push PointMapping's point_coeff_map_
   ///> optimization buffers
   opt_point_coeff_mask_.push(false); // default new frame
-  opt_point_coeff_map_.push(score_point_coeff_);
+  opt_point_coeff_map_.push(score_point_coeff_); //存的是当前帧对残差有贡献的surf points每个点的<score, <curr surf point, 对应的平面单位法向量>
   opt_cube_centers_.push(CubeCenter{laser_cloud_cen_length_, laser_cloud_cen_width_, laser_cloud_cen_height_});
   opt_transforms_.push(laser_transform.transform);
   opt_valid_idx_.push(laser_cloud_valid_idx_);
 
+
   // TODO: avoid memory allocation?
-  if (stage_flag_ != INITED || (!estimator_config_.enable_deskew && !estimator_config_.cutoff_deskew)) {
+  if (stage_flag_ != INITED || (!estimator_config_.enable_deskew && !estimator_config_.cutoff_deskew)) {//enable_deskew == true, 即未初始化阶段
     surf_stack_.push(boost::make_shared<PointCloud>(*laser_cloud_surf_stack_downsampled_));
     size_surf_stack_.push(laser_cloud_surf_stack_downsampled_->size());
 
@@ -544,7 +553,7 @@ void Estimator::ProcessLaserOdom(const Transform &transform_in, const std_msgs::
             SetInitFlag(true);
 
             Q_WI_ = R_WI_;
-//            wi_trans_.setRotation(tf::Quaternion{Q_WI_.x(), Q_WI_.y(), Q_WI_.z(), Q_WI_.w()});
+            //wi_trans_.setRotation(tf::Quaternion{Q_WI_.x(), Q_WI_.y(), Q_WI_.z(), Q_WI_.w()});
 
             ROS_WARN_STREAM(">>>>>>> IMU initialized <<<<<<<");
 
@@ -610,7 +619,7 @@ void Estimator::ProcessLaserOdom(const Transform &transform_in, const std_msgs::
           DLOG(INFO) << "Ps size: " << Ps_.size();
           DLOG(INFO) << "pre size: " << pre_integrations_.size();
 
-          ++cir_buf_count_;
+          ++cir_buf_count_; //只在该处改变,直到缓存了滑窗大小个laser帧，才会开始执行初始化
         }
 
         opt_point_coeff_mask_.last() = true;
@@ -773,12 +782,13 @@ void Estimator::ProcessLaserOdom(const Transform &transform_in, const std_msgs::
 
 }
 
+
 void Estimator::ProcessCompactData(const sensor_msgs::PointCloud2ConstPtr &compact_data,
                                    const std_msgs::Header &header) {
   /// 1. process compact data
-  PointMapping::CompactDataHandler(compact_data);
+  PointMapping::CompactDataHandler(compact_data); //通过调用后端的"/compact_data"topic回调函数把数据传过去
 
-  if (stage_flag_ == INITED) {
+  if (stage_flag_ == INITED) {//已经处理了滑窗大小个laser帧，且已经初始化成功
     Transform trans_prev(Eigen::Quaterniond(Rs_[estimator_config_.window_size - 1]).cast<float>(),
                          Ps_[estimator_config_.window_size - 1].cast<float>());
     Transform trans_curr(Eigen::Quaterniond(Rs_.last()).cast<float>(),
@@ -796,7 +806,7 @@ void Estimator::ProcessCompactData(const sensor_msgs::PointCloud2ConstPtr &compa
 //
 //    DLOG(INFO) << "tobe: " << transform_tobe_mapped_ * transform_incre;
 
-    if (estimator_config_.imu_factor) {
+    if (estimator_config_.imu_factor) {//true
       //    // WARNING: or using direct date?
       transform_tobe_mapped_bef_ = transform_tobe_mapped_ * transform_lb_ * d_trans * transform_lb_.inverse();
       transform_tobe_mapped_ = transform_tobe_mapped_bef_;
@@ -806,10 +816,11 @@ void Estimator::ProcessCompactData(const sensor_msgs::PointCloud2ConstPtr &compa
     }
 
   }
-
+  
+  //estimator_config_.imu_factor = 1(config文件中), 所以该代码执行的条件是stage_flag_ != INITED，即未初始化阶段
   if (stage_flag_ != INITED || !estimator_config_.imu_factor) {
     /// 2. process decoded data
-    PointMapping::Process();
+    PointMapping::Process(); //loam的后端，获得当前帧laser在laser_0下的位姿
   } else {
 //    for (int i = 0; i < laser_cloud_surf_last_->size(); ++i) {
 //      PointT &p = laser_cloud_surf_last_->at(i);
@@ -845,7 +856,11 @@ void Estimator::ProcessCompactData(const sensor_msgs::PointCloud2ConstPtr &compa
             << laser_cloud_corner_stack_downsampled_->size();
 
   Transform transform_to_init_ = transform_aft_mapped_;
-  ProcessLaserOdom(transform_to_init_, header);
+  ProcessLaserOdom(transform_to_init_, header); 
+  //未初始化阶段：
+  //transform_to_init_: 上一帧laser在map下位姿
+  //已经初始化阶段：
+  //???
 
 // NOTE: will be updated in PointMapping's OptimizeTransformTobeMapped
 //  if (stage_flag_ == INITED && !estimator_config_.imu_factor) {
@@ -2679,15 +2694,15 @@ void Estimator::ProcessEstimation() {
 //              << measurements.front().first.size();
 
     thread_mutex_.lock();
-    for (auto &measurement : measurements) {
+    for (auto &measurement : measurements) {//处理所有pairs
       ROS_DEBUG_STREAM("measurements ratio: 1:" << measurement.first.size());
       CompactDataConstPtr compact_data_msg = measurement.second;
       double ax = 0, ay = 0, az = 0, rx = 0, ry = 0, rz = 0;
       TicToc tic_toc_imu;
       tic_toc_imu.Tic();
-      for (auto &imu_msg : measurement.first) {
+      for (auto &imu_msg : measurement.first) {//处理pair中的所有imu measurements
         double imu_time = imu_msg->header.stamp.toSec();
-        double laser_odom_time = compact_data_msg->header.stamp.toSec() + mm_config_.msg_time_delay;
+        double laser_odom_time = compact_data_msg->header.stamp.toSec() + mm_config_.msg_time_delay;//mm_config_.msg_time_delay = 0
         if (imu_time <= laser_odom_time) {
 
           if (curr_time_ < 0) {

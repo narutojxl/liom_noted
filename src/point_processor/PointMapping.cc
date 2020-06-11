@@ -219,7 +219,7 @@ void PointMapping::CompactDataHandler(const sensor_msgs::PointCloud2ConstPtr &co
       } else if (i >= 3 + corner_size && i < 3 + corner_size + surf_size) {
         laser_cloud_surf_last_->push_back(p); //当前帧less flat points
       } else {
-        full_cloud_->push_back(p);
+        full_cloud_->push_back(p); //curr帧(包含所有线)
       }
     }
   }
@@ -716,16 +716,16 @@ void PointMapping::OptimizeTransformTobeMapped() {
 
   TransformUpdate();
 
-  size_t laser_cloud_sel_spc_size = laser_cloud_ori_spc.points.size();
+  size_t laser_cloud_sel_spc_size = laser_cloud_ori_spc.points.size(); //对残差有贡献的curr帧surf points
   if (laser_cloud_sel_spc_size >= 50) {
     for (int i = 0; i < laser_cloud_sel_spc_size; i++) {
-      pair<float, pair<PointT, PointT>> spc;
+      pair<float, pair<PointT, PointT>> spc; 
       const PointT &p_ori = laser_cloud_ori_spc.points[i];
-      const PointT &abs_coeff_in_map = abs_coeff_sel_spc.points[i];
-      const PointT &coeff_in_map = coeff_sel_spc.points[i];
+      const PointT &abs_coeff_in_map = abs_coeff_sel_spc.points[i]; //平面单位法向量
+      const PointT &coeff_in_map = coeff_sel_spc.points[i]; //带权重的平面单位法向量，权重与距离平面的远近成反比
 
       PointT p_in_map;
-      PointAssociateToMap(p_ori, p_in_map, transform_tobe_mapped_);
+      PointAssociateToMap(p_ori, p_in_map, transform_tobe_mapped_); //用后端计算出来的最终变换转换到map下
 
       spc.first = CalcPointDistance(coeff_in_map); // score
       spc.second.first = p_ori; // p_ori
@@ -740,7 +740,7 @@ void PointMapping::OptimizeTransformTobeMapped() {
 //      << "distance: " << p_in_map.x * abs_coeff_in_map.x + p_in_map.y * abs_coeff_in_map.y
 //          + p_in_map.z * abs_coeff_in_map.z + abs_coeff_in_map.intensity << " < 0";
 
-      score_point_coeff_.insert(spc);
+      score_point_coeff_.insert(spc); //将来在Estimator::ProcessLaserOdom()中用 <score, <curr surf point, 平面单位法向量>
 
 
 //      DLOG(INFO) << "distance * scale: "

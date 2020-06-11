@@ -34,7 +34,7 @@ namespace lio {
 
 void PointNormalFeature::UpdateCovariance(const Eigen::Vector3d &normal3d_in) {
   ;
-  Eigen::Matrix3d R = Eigen::Quaterniond::FromTwoVectors(e1, normal3d_in).toRotationMatrix();
+  Eigen::Matrix3d R = Eigen::Quaterniond::FromTwoVectors(e1, normal3d_in).toRotationMatrix(); //e1:(1,0,0)
   covariance = R * diag_covariance * R.transpose();
 }
 

@@ -46,17 +46,17 @@ class CircularBuffer {
       : capacity_(capacity),
         size_(0),
         start_idx_(0) {
-    buffer_ = new T[capacity];
+    buffer_ = new T[capacity]; //指向类型为T的数组
   };
 
   ~CircularBuffer() {
     delete[] buffer_;
-    buffer_ = NULL;
+    buffer_ = nullptr; //default: NULL
   }
 
   void Reset(size_t capacity = 1) {
     delete[] buffer_;
-    buffer_ = NULL;
+    buffer_ = nullptr; //default: NULL
 
     capacity_ = capacity;
     size_ = 0;
@@ -164,10 +164,10 @@ class CircularBuffer {
   void push(const T &element) {
     if (size_ < capacity_) {
       buffer_[size_] = element;
-      ++size_;
+      ++size_; //除了Reset()外，只在此处改变
     } else {
-      buffer_[start_idx_] = element;
-      start_idx_ = (start_idx_ + 1) % capacity_;
+      buffer_[start_idx_] = element; //当缓存了滑窗大小个数据后，新的数据会从头部开始放，覆盖旧的数据。即新数据在[0, start_idx_-1]位置，老数据在[start_idx_, capacity_]位置
+      start_idx_ = (start_idx_ + 1) % capacity_; 
     }
   }
 
