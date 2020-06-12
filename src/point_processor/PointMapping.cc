@@ -1022,12 +1022,12 @@ void PointMapping::Process() {
 
   // down sample feature stack clouds
   laser_cloud_corner_stack_downsampled_->clear();
-  down_size_filter_corner_.setInputCloud(laser_cloud_corner_stack_);
+  down_size_filter_corner_.setInputCloud(laser_cloud_corner_stack_); //curr下
   down_size_filter_corner_.filter(*laser_cloud_corner_stack_downsampled_);
   size_t laser_cloud_corner_stack_ds_size = laser_cloud_corner_stack_downsampled_->points.size();
 
   laser_cloud_surf_stack_downsampled_->clear();
-  down_size_filter_surf_.setInputCloud(laser_cloud_surf_stack_);
+  down_size_filter_surf_.setInputCloud(laser_cloud_surf_stack_); //curr下
   down_size_filter_surf_.filter(*laser_cloud_surf_stack_downsampled_);
   size_t laser_cloud_surf_stack_ds_size = laser_cloud_surf_stack_downsampled_->points.size();
 

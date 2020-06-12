@@ -380,7 +380,7 @@ void Estimator::ProcessImu(double dt,
   // NOTE: Do not update tmp_pre_integration_ until first laser comes
   if (cir_buf_count_ != 0) {//已经处理了第一帧laser
 
-    tmp_pre_integration_->push_back(dt, linear_acceleration, angular_velocity); //用当前的imu数据做一次progagate
+    tmp_pre_integration_->push_back(dt, linear_acceleration, angular_velocity); //用当前的imu数据做预积分，更新方差，更新jacobian
 
     dt_buf_[cir_buf_count_].push_back(dt);
     linear_acceleration_buf_[cir_buf_count_].push_back(linear_acceleration);
@@ -389,17 +389,20 @@ void Estimator::ProcessImu(double dt,
     size_t j = cir_buf_count_;
     Vector3d un_acc_0 = Rs_[j] * (acc_last_ - Bas_[j]) + g_vec_;
     Vector3d un_gyr = 0.5 * (gyr_last_ + angular_velocity) - Bgs_[j];
-    Rs_[j] *= DeltaQ(un_gyr * dt).toRotationMatrix();
+    Rs_[j] *= DeltaQ(un_gyr * dt).toRotationMatrix(); //累乘  
+    //以当前pair measurement中的第一个imu为原点。 每处理一次imu，把imu状态(PVQ)往前推一个dt。
+    //当把该pair中所有imu meas 循环完, 得到的PVQ是两相邻laser间delta_P, delta_V, delta_Q,即这里的Ps_[j], Vs_[j], Rs_[j] 
+
     Vector3d un_acc_1 = Rs_[j] * (linear_acceleration - Bas_[j]) + g_vec_;
     Vector3d un_acc = 0.5 * (un_acc_0 + un_acc_1);
-    Ps_[j] += dt * Vs_[j] + 0.5 * dt * dt * un_acc;
-    Vs_[j] += dt * un_acc;
+    Ps_[j] += dt * Vs_[j] + 0.5 * dt * dt * un_acc;  //累加
+    Vs_[j] += dt * un_acc;  //累加
 
     StampedTransform imu_tt;
     imu_tt.time = header.stamp.toSec();
-    imu_tt.transform.pos = Ps_[j].cast<float>();
+    imu_tt.transform.pos = Ps_[j].cast<float>(); 
     imu_tt.transform.rot = Eigen::Quaternionf(Rs_[j].cast<float>());
-    imu_stampedtransforms.push(imu_tt);
+    imu_stampedtransforms.push(imu_tt); //delta_p, delta_q 压入缓存 
 //    DLOG(INFO) << imu_tt.transform;
   }
   acc_last_ = linear_acceleration;
@@ -431,7 +434,7 @@ void Estimator::ProcessImu(double dt,
 // TODO: this function can be simplified
 void Estimator::ProcessLaserOdom(const Transform &transform_in, const std_msgs::Header &header) {
   //未初始化阶段：
-  //transform_in: 上一帧laser在map下位姿
+  //transform_in: 当前帧laser在map下位姿
   //已经初始化阶段：
   //???
 
@@ -471,9 +474,10 @@ void Estimator::ProcessLaserOdom(const Transform &transform_in, const std_msgs::
   // TODO: check extrinsic parameter estimation
 
   // NOTE: push PointMapping's point_coeff_map_
+
   ///> optimization buffers
   opt_point_coeff_mask_.push(false); // default new frame
-  opt_point_coeff_map_.push(score_point_coeff_); //存的是当前帧对残差有贡献的surf points每个点的<score, <curr surf point, 对应的平面单位法向量>
+  opt_point_coeff_map_.push(score_point_coeff_); //存的是当前帧对残差有贡献的surf points每个点的 <score, <curr surf point, 对应的平面单位法向量>
   opt_cube_centers_.push(CubeCenter{laser_cloud_cen_length_, laser_cloud_cen_width_, laser_cloud_cen_height_});
   opt_transforms_.push(laser_transform.transform);
   opt_valid_idx_.push(laser_cloud_valid_idx_);
@@ -481,22 +485,23 @@ void Estimator::ProcessLaserOdom(const Transform &transform_in, const std_msgs::
 
   // TODO: avoid memory allocation?
   if (stage_flag_ != INITED || (!estimator_config_.enable_deskew && !estimator_config_.cutoff_deskew)) {//enable_deskew == true, 即未初始化阶段
-    surf_stack_.push(boost::make_shared<PointCloud>(*laser_cloud_surf_stack_downsampled_));
+    surf_stack_.push(boost::make_shared<PointCloud>(*laser_cloud_surf_stack_downsampled_)); //curr less surf points
     size_surf_stack_.push(laser_cloud_surf_stack_downsampled_->size());
 
-    corner_stack_.push(boost::make_shared<PointCloud>(*laser_cloud_corner_stack_downsampled_));
+    corner_stack_.push(boost::make_shared<PointCloud>(*laser_cloud_corner_stack_downsampled_)); //curr less sharp points
     size_corner_stack_.push(laser_cloud_corner_stack_downsampled_->size());
   }
 
-  full_stack_.push(boost::make_shared<PointCloud>(*full_cloud_));
+  full_stack_.push(boost::make_shared<PointCloud>(*full_cloud_)); //curr帧
 
-  opt_surf_stack_.push(surf_stack_.last());
+  opt_surf_stack_.push(surf_stack_.last()); //最新的data
   opt_corner_stack_.push(corner_stack_.last());
 
-  opt_matP_.push(matP_.cast<double>());
+  opt_matP_.push(matP_.cast<double>()); //发生在loam退化时，对解进行修正的矩阵
   ///< optimization buffers
 
-  if (estimator_config_.run_optimization) {
+
+  if (estimator_config_.run_optimization) {//1
     switch (stage_flag_) {
       case NOT_INITED: {
 
@@ -511,10 +516,10 @@ void Estimator::ProcessLaserOdom(const Transform &transform_in, const std_msgs::
         }
 
         bool init_result = false;
-        if (cir_buf_count_ == estimator_config_.window_size) {
+        if (cir_buf_count_ == estimator_config_.window_size) {//已经处理了滑窗大小个laser帧
           tic_toc_.Tic();
 
-          if (!estimator_config_.imu_factor) {
+          if (!estimator_config_.imu_factor) {//imu_factor == false(0)
             init_result = true;
             // TODO: update states Ps_
             for (size_t i = 0; i < estimator_config_.window_size + 1;
@@ -524,9 +529,8 @@ void Estimator::ProcessLaserOdom(const Transform &transform_in, const std_msgs::
               Ps_[i] = trans_bi.pos.template cast<double>();
               Rs_[i] = trans_bi.rot.normalized().toRotationMatrix().template cast<double>();
             }
-          } else {
-
-            if (extrinsic_stage_ == 2) {
+          } else {//imu_factor == true
+            if (extrinsic_stage_ == 2) {//不知道l2b的外参
               // TODO: move before initialization
               bool extrinsic_result = ImuInitializer::EstimateExtrinsicRotation(all_laser_transforms_, transform_lb_);
               LOG(INFO) << ">>>>>>> extrinsic calibration"
@@ -538,13 +542,14 @@ void Estimator::ProcessLaserOdom(const Transform &transform_in, const std_msgs::
                 DLOG(INFO) << "change extrinsic stage to 1";
               }
             }
-
-            if (extrinsic_stage_ != 2 && (header.stamp.toSec() - initial_time_) > 0.1) {
+            if (extrinsic_stage_ != 2 && (header.stamp.toSec() - initial_time_) > 0.1) {//initial_time_初值 == -1
               DLOG(INFO) << "EXTRINSIC STAGE: " << extrinsic_stage_;
               init_result = RunInitialization();
               initial_time_ = header.stamp.toSec();
             }
           }
+
+
 
           DLOG(INFO) << "initialization time: " << tic_toc_.Toc() << " ms";
 
@@ -619,7 +624,7 @@ void Estimator::ProcessLaserOdom(const Transform &transform_in, const std_msgs::
           DLOG(INFO) << "Ps size: " << Ps_.size();
           DLOG(INFO) << "pre size: " << pre_integrations_.size();
 
-          ++cir_buf_count_; //只在该处改变,直到缓存了滑窗大小个laser帧，才会开始执行初始化
+          ++cir_buf_count_; //只在该处改变,直到处理了滑窗大小个laser帧，才会开始执行初始化
         }
 
         opt_point_coeff_mask_.last() = true;
@@ -776,7 +781,7 @@ void Estimator::ProcessLaserOdom(const Transform &transform_in, const std_msgs::
     }
   }
 
-  wi_trans_.setRotation(tf::Quaternion{Q_WI_.x(), Q_WI_.y(), Q_WI_.z(), Q_WI_.w()});
+  wi_trans_.setRotation(tf::Quaternion{Q_WI_.x(), Q_WI_.y(), Q_WI_.z(), Q_WI_.w()}); //在未初始化阶段且还未处理滑窗大小个laser时, Q_WI_ = I
   wi_trans_.stamp_ = header.stamp;
   tf_broadcaster_est_.sendTransform(wi_trans_);
 
@@ -818,9 +823,9 @@ void Estimator::ProcessCompactData(const sensor_msgs::PointCloud2ConstPtr &compa
   }
   
   //estimator_config_.imu_factor = 1(config文件中), 所以该代码执行的条件是stage_flag_ != INITED，即未初始化阶段
-  if (stage_flag_ != INITED || !estimator_config_.imu_factor) {
+  if (stage_flag_ != INITED || !estimator_config_.imu_factor) {//即未初始化阶段
     /// 2. process decoded data
-    PointMapping::Process(); //loam的后端，获得当前帧laser在laser_0下的位姿
+    PointMapping::Process(); //调用loam的后端，获得当前帧laser在laser_0下的位姿
   } else {
 //    for (int i = 0; i < laser_cloud_surf_last_->size(); ++i) {
 //      PointT &p = laser_cloud_surf_last_->at(i);
@@ -858,7 +863,7 @@ void Estimator::ProcessCompactData(const sensor_msgs::PointCloud2ConstPtr &compa
   Transform transform_to_init_ = transform_aft_mapped_;
   ProcessLaserOdom(transform_to_init_, header); 
   //未初始化阶段：
-  //transform_to_init_: 上一帧laser在map下位姿
+  //transform_to_init_: 当前帧laser在map下位姿
   //已经初始化阶段：
   //???
 

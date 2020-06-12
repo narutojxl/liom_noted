@@ -185,8 +185,8 @@ class PointMapping {
   PointCloudPtr laser_cloud_surf_last_;     ///< last surface points cloud
   PointCloudPtr full_cloud_;      ///< last full resolution cloud
 
-  PointCloudPtr laser_cloud_corner_stack_;
-  PointCloudPtr laser_cloud_surf_stack_;
+  PointCloudPtr laser_cloud_corner_stack_; //curr less sharp points
+  PointCloudPtr laser_cloud_surf_stack_; //curr less surf points
   PointCloudPtr laser_cloud_corner_stack_downsampled_;  ///< down sampled
   PointCloudPtr laser_cloud_surf_stack_downsampled_;    ///< down sampled
 

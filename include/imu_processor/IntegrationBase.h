@@ -91,15 +91,16 @@ class IntegrationBase {
         delta_v_{Vector3d::Zero()} {
     config_ = config;
     g_vec_ = Vector3d(0, 0, -config_.g_norm); //ENU型
-    noise_ = Matrix<double, 18, 18>::Zero(); //TODO 18维？
+    noise_ = Matrix<double, 18, 18>::Zero(); //TODO 18*18?
     noise_.block<3, 3>(0, 0) = (config_.acc_n * config_.acc_n) * Matrix3d::Identity();
     noise_.block<3, 3>(3, 3) = (config_.gyr_n * config_.gyr_n) * Matrix3d::Identity();
-    noise_.block<3, 3>(6, 6) = (config_.acc_n * config_.acc_n) * Matrix3d::Identity(); //TODO为何重复放
-    noise_.block<3, 3>(9, 9) = (config_.gyr_n * config_.gyr_n) * Matrix3d::Identity(); //TODO为何重复放
+    noise_.block<3, 3>(6, 6) = (config_.acc_n * config_.acc_n) * Matrix3d::Identity(); //TODO为何把测量噪声重复放两次
+    noise_.block<3, 3>(9, 9) = (config_.gyr_n * config_.gyr_n) * Matrix3d::Identity(); 
     noise_.block<3, 3>(12, 12) = (config_.acc_w * config_.acc_w) * Matrix3d::Identity();
     noise_.block<3, 3>(15, 15) = (config_.gyr_w * config_.gyr_w) * Matrix3d::Identity();
   }
 
+  //用当前的imu数据做预积分，更新方差，更新jacobian
   void push_back(double dt, const Vector3d &acc, const Vector3d &gyr) {
     dt_buf_.push_back(dt);
     acc_buf_.push_back(acc);
@@ -124,6 +125,8 @@ class IntegrationBase {
     }
   }
 
+  //跟lins中的integrationBase.h 一样，都是vins_mono中的， 只是状态变量的顺序不一样
+  //此处的状态顺序是：(预积分测量delta_p  预积分测量delta_q   预积分测量delta_v    ba    bg)
   void MidPointIntegration(double dt,
                            const Vector3d &acc0, const Vector3d &gyr0,
                            const Vector3d &acc1, const Vector3d &gyr1,
@@ -146,7 +149,7 @@ class IntegrationBase {
     result_linearized_ba = linearized_ba;
     result_linearized_bg = linearized_bg;
 
-    if (update_jacobian) {
+    if (update_jacobian) {//true
       Vector3d w_x = 0.5 * (gyr0 + gyr1) - linearized_bg;
       Vector3d a_0_x = acc0 - linearized_ba;
       Vector3d a_1_x = acc1 - linearized_ba;
@@ -163,18 +166,23 @@ class IntegrationBase {
           -a_1_x(1), a_1_x(0), 0;
 
       // NOTE: F = Fd = \Phi = I + dF*dt
-      MatrixXd F = MatrixXd::Zero(15, 15);
+      MatrixXd F = MatrixXd::Zero(15, 15);   //和lins中的F一致,只是状态顺序不同,见lins IntegrationBase模块
       F.block<3, 3>(0, 0) = Matrix3d::Identity();
       F.block<3, 3>(0, 3) = -0.25 * delta_q.toRotationMatrix() * R_a_0_x * dt * dt +
           -0.25 * result_delta_q.toRotationMatrix() * R_a_1_x * (Matrix3d::Identity() - R_w_x * dt) * dt * dt;
+
       F.block<3, 3>(0, 6) = MatrixXd::Identity(3, 3) * dt;
       F.block<3, 3>(0, 9) = -0.25 * (delta_q.toRotationMatrix() + result_delta_q.toRotationMatrix()) * dt * dt;
-//      F.block<3, 3>(0, 12) = -0.25 * result_delta_q.toRotationMatrix() * R_a_1_x * dt * dt * -dt;
+
+//    F.block<3, 3>(0, 12) = -0.25 * result_delta_q.toRotationMatrix() * R_a_1_x * dt * dt * -dt;
       F.block<3, 3>(0, 12) = -0.1667 * result_delta_q.toRotationMatrix() * R_a_1_x * dt * dt * -dt;
+
       F.block<3, 3>(3, 3) = Matrix3d::Identity() - R_w_x * dt;
       F.block<3, 3>(3, 12) = -1.0 * MatrixXd::Identity(3, 3) * dt;
+
       F.block<3, 3>(6, 3) = -0.5 * delta_q.toRotationMatrix() * R_a_0_x * dt +
           -0.5 * result_delta_q.toRotationMatrix() * R_a_1_x * (Matrix3d::Identity() - R_w_x * dt) * dt;
+
       F.block<3, 3>(6, 6) = Matrix3d::Identity();
       F.block<3, 3>(6, 9) = -0.5 * (delta_q.toRotationMatrix() + result_delta_q.toRotationMatrix()) * dt;
       F.block<3, 3>(6, 12) = -0.5 * result_delta_q.toRotationMatrix() * R_a_1_x * dt * -dt;
@@ -187,9 +195,12 @@ class IntegrationBase {
       MatrixXd V = MatrixXd::Zero(15, 18);
 //      V.block<3, 3>(0, 0) = 0.25 * delta_q.toRotationMatrix() * dt * dt;
       V.block<3, 3>(0, 0) = 0.5 * delta_q.toRotationMatrix() * dt * dt;
+
       V.block<3, 3>(0, 3) = 0.25 * -result_delta_q.toRotationMatrix() * R_a_1_x * dt * dt * 0.5 * dt;
+
 //      V.block<3, 3>(0, 6) = 0.25 * result_delta_q.toRotationMatrix() * dt * dt;
       V.block<3, 3>(0, 6) = 0.5 * result_delta_q.toRotationMatrix() * dt * dt;
+
       V.block<3, 3>(0, 9) = V.block<3, 3>(0, 3);
       V.block<3, 3>(3, 3) = 0.5 * MatrixXd::Identity(3, 3) * dt;
       V.block<3, 3>(3, 9) = 0.5 * MatrixXd::Identity(3, 3) * dt;
@@ -202,8 +213,9 @@ class IntegrationBase {
 
       //step_jacobian = F;
       //step_V = V;
-      jacobian_ = F * jacobian_;
-      covariance_ = F * covariance_ * F.transpose() + V * noise_ * V.transpose();
+      jacobian_ = F * jacobian_; //TODO猜测jacobian的物理意义应该是(预积分测量delta_p  预积分测量delta_q   预积分测量delta_v    ba    bg)分别对各个分量的雅克比
+      covariance_ = F * covariance_ * F.transpose() + V * noise_ * V.transpose(); //TODO公式和lins不一样StatePredictor::predict()
+      //F对jacobian和方差的更新，见liom补充材料B.7
     }
 
   }
@@ -233,7 +245,7 @@ class IntegrationBase {
 
       R_w_x << 0, -w_x(2), w_x(1),
           w_x(2), 0, -w_x(0),
-          -w_x(1), w_x(0), 0;
+          -w_x(1), w_x(0), 0;  //反对称
       R_a_x << 0, -a_x(2), a_x(1),
           a_x(2), 0, -a_x(0),
           -a_x(1), a_x(0), 0;
@@ -269,7 +281,7 @@ class IntegrationBase {
       V = dt * U;
 //      step_jacobian = F;
 //      step_V = V;
-      jacobian_ = F * jacobian_;
+      jacobian_ = F * jacobian_; //计算imu预积分测量残差时要用
       covariance_ = F * covariance_ * F.transpose() + V * noise * V.transpose();
     }
 
@@ -305,7 +317,8 @@ class IntegrationBase {
     gyr0_ = gyr1_;
 
   }
-
+ 
+  //imu预积分测量残差 +　bias更新的残差
   Matrix<double, 15, 1> Evaluate(const Vector3d &Pi,
                                  const Quaterniond &Qi,
                                  const Vector3d &Vi,
@@ -322,26 +335,29 @@ class IntegrationBase {
 
     Matrix<double, 15, 1> residuals;
 
-    Matrix3d dp_dba = jacobian_.block<3, 3>(O_P, O_BA);
-    Matrix3d dp_dbg = jacobian_.block<3, 3>(O_P, O_BG);
+    Matrix3d dp_dba = jacobian_.block<3, 3>(O_P, O_BA); //位置预积分测量delta_p对ba雅克比  d: 表示偏导的意思 
+    Matrix3d dp_dbg = jacobian_.block<3, 3>(O_P, O_BG); //位置预积分测量delta_p对bg雅克比
 
-    Matrix3d dq_dbg = jacobian_.block<3, 3>(O_R, O_BG);
+    Matrix3d dq_dbg = jacobian_.block<3, 3>(O_R, O_BG); //旋转预积分测量delta_r对bg雅克比
 
-    Matrix3d dv_dba = jacobian_.block<3, 3>(O_V, O_BA);
-    Matrix3d dv_dbg = jacobian_.block<3, 3>(O_V, O_BG);
+    Matrix3d dv_dba = jacobian_.block<3, 3>(O_V, O_BA); //速度预积分测量delta_v对ba雅克比
+    Matrix3d dv_dbg = jacobian_.block<3, 3>(O_V, O_BG); //速度预积分测量delta_v对bg雅克比
 
     Vector3d dba = Bai - linearized_ba_;
-    Vector3d dbg = Bgi - linearized_bg_; // NOTE: optimized one minus the linearized one
+    Vector3d dbg = Bgi - linearized_bg_; // NOTE: optimized one minus(减去) the linearized one
 
-    Quaterniond corrected_delta_q = delta_q_ * DeltaQ(dq_dbg * dbg);
+    Quaterniond corrected_delta_q = delta_q_ * DeltaQ(dq_dbg * dbg); //bias updata对imu预积分测量的更新，预积分paper44式
     Vector3d corrected_delta_v = delta_v_ + dv_dba * dba + dv_dbg * dbg;
     Vector3d corrected_delta_p = delta_p_ + dp_dba * dba + dp_dbg * dbg;
-
+    
+    //预积分paper45式 
     residuals.block<3, 1>(O_P, 0) =
-        Qi.inverse() * (-0.5 * g_vec_ * sum_dt_ * sum_dt_ + Pj - Pi - Vi * sum_dt_) - corrected_delta_p;
-    residuals.block<3, 1>(O_R, 0) = 2 * (corrected_delta_q.inverse() * (Qi.inverse() * Qj)).vec();
-    residuals.block<3, 1>(O_V, 0) = Qi.inverse() * (-g_vec_ * sum_dt_ + Vj - Vi) - corrected_delta_v;
-    residuals.block<3, 1>(O_BA, 0) = Baj - Bai;
+        Qi.inverse() * (-0.5 * g_vec_ * sum_dt_ * sum_dt_ + Pj - Pi - Vi * sum_dt_) - corrected_delta_p; //预积分位置测量残差项
+
+    residuals.block<3, 1>(O_R, 0) = 2 * (corrected_delta_q.inverse() * (Qi.inverse() * Qj)).vec(); //预积分旋转测量残差项
+
+    residuals.block<3, 1>(O_V, 0) = Qi.inverse() * (-g_vec_ * sum_dt_ + Vj - Vi) - corrected_delta_v; //预积分速度测量残差项
+    residuals.block<3, 1>(O_BA, 0) = Baj - Bai; //bias delta  预积分paper48式 
     residuals.block<3, 1>(O_BG, 0) = Bgj - Bgi;
 
 //    DLOG(INFO) << Qi.inverse().coeffs().transpose();
@@ -371,9 +387,9 @@ class IntegrationBase {
   Matrix<double, 18, 18> noise_;
 
   double sum_dt_;
-  Vector3d delta_p_;
-  Quaterniond delta_q_;
-  Vector3d delta_v_;
+  Vector3d delta_p_; //预积分位置测量
+  Quaterniond delta_q_; //预积分旋转测量
+  Vector3d delta_v_; //预积分速度测量
 
   std::vector<double> dt_buf_;
   std::vector<Vector3d> acc_buf_;
