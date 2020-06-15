@@ -70,7 +70,7 @@ struct LaserTransform {
 
 };
 
-typedef pair<double, LaserTransform> PairTimeLaserTransform;
+typedef pair<double, LaserTransform> PairTimeLaserTransform; //first: time 
 
 class ImuInitializer {
 

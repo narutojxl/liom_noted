@@ -39,7 +39,7 @@ extrinsic_translation: !!opencv-matrix
 run_optimization: 1
 
 update_laser_imu: 1 #update the optimized states, just for debugging
-gravity_fix: 1
+gravity_fix: 1 #debug only
 
 plane_projection_factor: 0
 
@@ -65,6 +65,6 @@ g_norm: 9.80
 enable_deskew: 1
 cutoff_deskew: 0 #1：turn off deskewing, when using corrected point cloud data, like KITTI.
 
-keep_features: 0 #indoor is 1
+keep_features: 0 #indoor is 1, keep the previously calculated features or not
 
 msg_time_delay: 0.05 #the time offset between lidar and IMU

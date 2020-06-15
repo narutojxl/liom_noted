@@ -137,7 +137,7 @@ class CircularBuffer {
     return buffer_[start_idx_];
   }
 
-  T &first() {//返回时最老的数据(时间戳最小）
+  T &first() {//返回最老的数据(时间戳最小）
     return buffer_[start_idx_];
   }
 
@@ -150,7 +150,7 @@ class CircularBuffer {
     return buffer_[idx];
   }
 
-  T &last() { //返回时最新的数据(时间戳最大）
+  T &last() { //返回最新的数据(时间戳最大）
     size_t idx = size_ == 0 ? 0 : (start_idx_ + size_ - 1) % capacity_;
     return buffer_[idx];
   }

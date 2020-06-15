@@ -69,25 +69,33 @@ void EstimateGyroBias(CircularBuffer<PairTimeLaserTransform> &all_laser_transfor
     VectorXd tmp_b(3);
     tmp_b.setZero();
     Eigen::Quaterniond q_ij(laser_trans_i.second.transform.rot.conjugate() * laser_trans_j.second.transform.rot);
-    tmp_A = laser_trans_j.second.pre_integration->jacobian_.template block<3, 3>(O_R, O_BG); /// Jacobian of dr12_bg
+    tmp_A = laser_trans_j.second.pre_integration->jacobian_.template block<3, 3>(O_R, O_BG); /// Jacobian of dr12_bg  旋转预积分测量对bg的雅克比
     tmp_b = 2 * (laser_trans_j.second.pre_integration->delta_q_.conjugate() * q_ij).vec(); /// 2*vec(IMU_ij^T * q_ij)
+    //TODO 这有两个问题
+    //1: 应该是 q_ij = q_bl * q_ij * q_bl.conj()
+    //2: 即使计算上面的 q_ij不考虑外参旋转，但是由于残差表达是： r = delta_q.conj() * q_ij
+    //现在这计算的系数(残差对bg雅克比)却是 r = q_ij.conj() * delta_q 对bg的雅克比, 不是 r = delta_q.conj() * q_ij
+    //https://github.com/hyye/lio-mapping/issues/44
     A += tmp_A.transpose() * tmp_A;
     b += tmp_A.transpose() * tmp_b;
+  }//旋转预积分测量值和调用loam的后端计算的相邻两laser帧间的delta_R
+   //没有用imu预积分测量值的位置、速度预积分测量值
+   //两个delta_R计算的是同一个量，所以构成残差。系数是旋转预积分测量值对bg的bias，构成normal equation, 求得delta_bg
 
-  }
   delta_bg = A.ldlt().solve(b);
   DLOG(WARNING) << "gyroscope bias initial calibration: " << delta_bg.transpose();
 
-  for (int i = 0; i <= window_size; ++i) {
+  for (int i = 0; i <= window_size; ++i) {//更新每个积分区间的bg
     Bgs[i] += delta_bg;
   }
 
   for (size_t i = 0; i < window_size; ++i) {
     PairTimeLaserTransform &laser_trans_j = all_laser_transforms[i + 1];
-    laser_trans_j.second.pre_integration->Repropagate(Vector3d::Zero(), Bgs[0]);
+    laser_trans_j.second.pre_integration->Repropagate(Vector3d::Zero(), Bgs[0]); //用更新后的bg，重新对窗口内的每个pair的imu meas做一次预积分
   }
 
 }
+
 
 bool ApproximateGravity(CircularBuffer<PairTimeLaserTransform> &all_laser_transforms, Vector3d &g,
                         Transform &transform_lb) {
@@ -118,13 +126,13 @@ bool ApproximateGravity(CircularBuffer<PairTimeLaserTransform> &all_laser_transf
     double dt12 = laser_trans_j.second.pre_integration->sum_dt_;
     double dt23 = laser_trans_k.second.pre_integration->sum_dt_;
 
-    Vector3d dp12 = laser_trans_j.second.pre_integration->delta_p_.template cast<double>();
+    Vector3d dp12 = laser_trans_j.second.pre_integration->delta_p_.template cast<double>();//imu预积分测量量
     Vector3d dp23 = laser_trans_k.second.pre_integration->delta_p_.template cast<double>();
     Vector3d dv12 = laser_trans_j.second.pre_integration->delta_v_.template cast<double>();
 
-    Vector3d pl1 = laser_trans_i.second.transform.pos.template cast<double>();
-    Vector3d pl2 = laser_trans_j.second.transform.pos.template cast<double>();
-    Vector3d pl3 = laser_trans_k.second.transform.pos.template cast<double>();
+    Vector3d pl1 = laser_trans_i.second.transform.pos.template cast<double>(); //通过loam后端计算出来的位姿和外参
+    Vector3d pl2 = laser_trans_j.second.transform.pos.template cast<double>(); //TODO 残差是什么？
+    Vector3d pl3 = laser_trans_k.second.transform.pos.template cast<double>(); //优化变量是g向量(重力在初始时刻laser0下的表达式)
     Vector3d plb = transform_lb.pos.template cast<double>();
 
     Matrix3d rl1 = laser_trans_i.second.transform.rot.template cast<double>().toRotationMatrix();
@@ -137,7 +145,7 @@ bool ApproximateGravity(CircularBuffer<PairTimeLaserTransform> &all_laser_transf
     VectorXd tmp_b(3);
     tmp_b.setZero();
 
-    tmp_A = 0.5 * I3x3 * (dt12 * dt12 * dt23 + dt23 * dt23 * dt12);
+    tmp_A = 0.5 * I3x3 * (dt12 * dt12 * dt23 + dt23 * dt23 * dt12); //TODO公式待验证
     tmp_b = (pl2 - pl1) * dt23 - (pl3 - pl2) * dt12
         + (rl2 - rl1) * plb * dt23 - (rl3 - rl2) * plb * dt12
         + rl2 * rlb * dp23 * dt12 + rl1 * rlb * dv12 * dt12 * dt23
@@ -240,22 +248,27 @@ void RefineGravityAccBias(CircularBuffer<PairTimeLaserTransform> &all_laser_tran
       Matrix3d rlb = transform_lb.rot.normalized().template cast<double>().toRotationMatrix();
 
       tmp_A.block<3, 3>(0, 0) = dt12 * Matrix3d::Identity();
+
 //      tmp_A.block<3, 2>(0, 6) = (-0.5 * r_WI * SO3::hat(gI_n) * g_norm * dt12 * dt12).topLeftCorner<3, 2>();
 //      tmp_b.block<3, 1>(0, 0) =
 //          pl2 - pl1 - rl1 * rlb * dp12 - (rl1 - rl2) * plb - 0.5 * r_WI * gI_n * g_norm * dt12 * dt12;
+
       tmp_A.block<3, 2>(0, 6) = 0.5 * Matrix3d::Identity() * lxly * dt12 * dt12;
       tmp_b.block<3, 1>(0, 0) =
           pl2 - pl1 - rl1 * rlb * dp12 - (rl1 - rl2) * plb - 0.5 * g_refined * dt12 * dt12;
 
       tmp_A.block<3, 3>(3, 0) = Matrix3d::Identity();
       tmp_A.block<3, 3>(3, 3) = -Matrix3d::Identity();
+
 //      tmp_A.block<3, 2>(3, 6) = (-r_WI * SO3::hat(gI_n) * g_norm * dt12).topLeftCorner<3, 2>();
 //      tmp_b.block<3, 1>(3, 0) = -rl1 * rlb * dv12 - r_WI * gI_n * g_norm * dt12;
+
       tmp_A.block<3, 2>(3, 6) = Matrix3d::Identity() * lxly * dt12;
       tmp_b.block<3, 1>(3, 0) = -rl1 * rlb * dv12 - g_refined * dt12;
 
       Matrix<double, 6, 6> cov_inv = Matrix<double, 6, 6>::Zero();
       //cov.block<6, 6>(0, 0) = IMU_cov[i + 1];
+
       //MatrixXd cov_inv = cov.inverse();
       cov_inv.setIdentity();
 
@@ -298,7 +311,7 @@ void RefineGravityAccBias(CircularBuffer<PairTimeLaserTransform> &all_laser_tran
 
   Eigen::Matrix3d r_WI(SO3::exp(ang_WI * v_WI).unit_quaternion());
 
-  R_WI = r_WI;
+  R_WI = r_WI;  //TODO: 计算的是laser0与惯性系(imu世界坐标系)之间的旋转
 
   // WARNING check velocity
   for (int i = 0; i < size_velocities; ++i) {
@@ -350,9 +363,15 @@ void RefineGravityAccBias(CircularBuffer<PairTimeLaserTransform> &all_laser_tran
 //
 //}
 
+/**
+ * @brief 估计l2b的旋转
+ * @param all_laser_transforms: 存放的是窗口内每帧的位姿 + 及对各个pair imu数据的预积分
+ * @param transform_lb：求解laser2body(body is imu) TF, 传进来的初值来自配置文件(构造函数)
+ * 参考文献： Monocular Visual–Inertial State Estimation With Online Initialization 
+ *  and Camera–IMU Extrinsic Calibration V-A-1 “Linear Rotation Calibration”部分，注意：论文中作者的四元数是JPL，Eigen的四元数是Hamilton。
+ */
 bool ImuInitializer::EstimateExtrinsicRotation(CircularBuffer<PairTimeLaserTransform> &all_laser_transforms,
                                                Transform &transform_lb) {
-
   Transform transform_bl = transform_lb.inverse();
   Eigen::Quaterniond rot_bl = transform_bl.rot.template cast<double>();
 
@@ -367,15 +386,15 @@ bool ImuInitializer::EstimateExtrinsicRotation(CircularBuffer<PairTimeLaserTrans
     Eigen::Quaterniond delta_qij_imu = laser_trans_j.second.pre_integration->delta_q_;
 
     Eigen::Quaterniond delta_qij_laser
-        = (laser_trans_i.second.transform.rot.conjugate() * laser_trans_j.second.transform.rot).template cast<double>();
+        = (laser_trans_i.second.transform.rot.conjugate() * laser_trans_j.second.transform.rot).template cast<double>(); //loam后端得到的结果
 
-    Eigen::Quaterniond delta_qij_laser_from_imu = rot_bl.conjugate() * delta_qij_imu * rot_bl;
+    Eigen::Quaterniond delta_qij_laser_from_imu = rot_bl.conjugate() * delta_qij_imu * rot_bl; //由imu预积分旋转测量和给的外参旋转初值得到li_lj的旋转
 
-    double angular_distance = 180 / M_PI * delta_qij_laser.angularDistance(delta_qij_laser_from_imu);
+    double angular_distance = 180 / M_PI * delta_qij_laser.angularDistance(delta_qij_laser_from_imu);//残差
 
 //    DLOG(INFO) << i << ", " << angular_distance;
 
-    double huber = angular_distance > 5.0 ? 5.0 / angular_distance : 1.0;
+    double huber = angular_distance > 5.0 ? 5.0 / angular_distance : 1.0; //权重
 
     Eigen::Matrix4d lq_mat = LeftQuatMatrix(delta_qij_laser);
     Eigen::Matrix4d rq_mat = RightQuatMatrix(delta_qij_imu);
@@ -395,9 +414,9 @@ bool ImuInitializer::EstimateExtrinsicRotation(CircularBuffer<PairTimeLaserTrans
 
 //  DLOG(INFO) << ">>>>>>> A <<<<<<<" << endl << A;
 
-  Eigen::JacobiSVD<MatrixXd> svd(A, Eigen::ComputeFullU | Eigen::ComputeFullV);
-  Eigen::Matrix<double, 4, 1> x = svd.matrixV().col(3);
-  Quaterniond estimated_qlb(x);
+  Eigen::JacobiSVD<MatrixXd> svd(A, Eigen::ComputeFullU | Eigen::ComputeFullV); //解Ax = 0
+  Eigen::Matrix<double, 4, 1> x = svd.matrixV().col(3); //降序
+  Quaterniond estimated_qlb(x); //TODO参考文献中解出来的x顺序是: 虚部 + 实部(JPL)
 
   transform_lb.rot = estimated_qlb.cast<float>().toRotationMatrix();
 
@@ -410,7 +429,7 @@ bool ImuInitializer::EstimateExtrinsicRotation(CircularBuffer<PairTimeLaserTrans
 //  cout << cov << endl;
 
   // NOTE: covariance 0.25
-  if (cov(1) > 0.25) {
+  if (cov(1) > 0.25) {//初始化时, 旋转够大，对系统激励充足
     return true;
   } else {
     return false;
@@ -418,29 +437,32 @@ bool ImuInitializer::EstimateExtrinsicRotation(CircularBuffer<PairTimeLaserTrans
 
 }
 
-bool ImuInitializer::Initialization(CircularBuffer<PairTimeLaserTransform> &all_laser_transforms,
-                                    CircularBuffer<Vector3d> &Vs,
-                                    CircularBuffer<Vector3d> &Bas,
-                                    CircularBuffer<Vector3d> &Bgs,
-                                    Vector3d &g,
-                                    Transform &transform_lb,
-                                    Matrix3d &R_WI) {
+
+//作者的初始化代码来自vins-mono,见https://www.cnblogs.com/buxiaoyi/p/8203285.html, 崔华坤vins_mono笔记
+//原始vins_mono初始化代码: https://github.com/HKUST-Aerial-Robotics/VINS-Mono/blob/0d280936e441ebb782bf8855d86e13999a22da63/vins_estimator/src/initial/initial_aligment.cpp
+bool ImuInitializer::Initialization(CircularBuffer<PairTimeLaserTransform> &all_laser_transforms, //窗口内每帧的位姿 +　last帧到curr帧的imu数据，包括对这些imu数据的预积分
+                                    CircularBuffer<Vector3d> &Vs,  //窗口内相邻两帧laser，前一帧laser到后一帧laer的delta_v
+                                    CircularBuffer<Vector3d> &Bas, //返回窗口内每积分区间的ba
+                                    CircularBuffer<Vector3d> &Bgs, //返回窗口内每积分区间的bg
+                                    Vector3d &g, //g在laser0下的向量g_l0
+                                    Transform &transform_lb, //l2b外参
+                                    Matrix3d &R_WI) { //计算的是laser0与惯性系(imu世界坐标系)之间的旋转
 //  TicToc tic_toc;
 //  tic_toc.Tic();
 
-  EstimateGyroBias(all_laser_transforms, Bgs);
+  EstimateGyroBias(all_laser_transforms, Bgs);//修正陀螺仪的bias，重新计算窗口内每个pair的预积分测量
 
 //  DLOG(INFO) << "EstimateGyroBias time: " << tic_toc.Toc() << " ms";
 //  tic_toc.Tic();
 
-  if (!ApproximateGravity(all_laser_transforms, g, transform_lb)) {
+  if (!ApproximateGravity(all_laser_transforms, g, transform_lb)) {//用窗口内imu预积分数据计算出初始时刻下的g向量
     return false;
   };
 
 //  DLOG(INFO) << "ApproximateGravity time: " << tic_toc.Toc() << " ms";
 //  tic_toc.Toc();
 
-  RefineGravityAccBias(all_laser_transforms, Vs, Bgs, g, transform_lb, R_WI);
+  RefineGravityAccBias(all_laser_transforms, Vs, Bgs, g, transform_lb, R_WI); //TODO没看明白
 
 //  DLOG(INFO) << "RefineGravityAccBias time: " << tic_toc.Toc() << " ms";
 //  tic_toc.Tic();

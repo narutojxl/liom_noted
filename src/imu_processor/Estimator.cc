@@ -457,7 +457,7 @@ void Estimator::ProcessLaserOdom(const Transform &transform_in, const std_msgs::
   LaserTransform laser_transform(header.stamp.toSec(), transform_in);
 
   laser_transform.pre_integration = tmp_pre_integration_; //tmp_pre_integration_: 存的是last帧和curr帧之间的imu数据，而且已经对每个imu做了预积分，在ProcessImu()中
-  pre_integrations_.push(tmp_pre_integration_); //压到buffer中
+  pre_integrations_.push(tmp_pre_integration_); //存放窗口内各个pair的预积分结果
 
   // reset tmp_pre_integration_
   tmp_pre_integration_.reset();
@@ -467,7 +467,8 @@ void Estimator::ProcessLaserOdom(const Transform &transform_in, const std_msgs::
                                                                            Bgs_[cir_buf_count_],
                                                                            estimator_config_.pim_config));
 
-  all_laser_transforms_.push(make_pair(header.stamp.toSec(), laser_transform)); //存的是当前帧的位姿 +　last帧到curr帧的imu数据，包括对这些imu数据的预积分
+  all_laser_transforms_.push(make_pair(header.stamp.toSec(), laser_transform)); 
+  //把当前帧的位姿 +　last帧到curr帧的imu数据，包括对这些imu数据的预积分存放到窗口内
 
 
 
@@ -530,14 +531,14 @@ void Estimator::ProcessLaserOdom(const Transform &transform_in, const std_msgs::
               Rs_[i] = trans_bi.rot.normalized().toRotationMatrix().template cast<double>();
             }
           } else {//imu_factor == true
-            if (extrinsic_stage_ == 2) {//不知道l2b的外参
+            if (extrinsic_stage_ == 2) {//不知道l2b外参
               // TODO: move before initialization
-              bool extrinsic_result = ImuInitializer::EstimateExtrinsicRotation(all_laser_transforms_, transform_lb_);
+              bool extrinsic_result = ImuInitializer::EstimateExtrinsicRotation(all_laser_transforms_, transform_lb_); //估计l2b的旋转,平移依然用的是配置文件给的初值
               LOG(INFO) << ">>>>>>> extrinsic calibration"
                         << (extrinsic_result ? " successful"
                                              : " failed")
                         << " <<<<<<<";
-              if (extrinsic_result) {
+              if (extrinsic_result) {//初始化时, 旋转够大，对系统激励充足
                 extrinsic_stage_ = 1;
                 DLOG(INFO) << "change extrinsic stage to 1";
               }
@@ -574,7 +575,7 @@ void Estimator::ProcessLaserOdom(const Transform &transform_in, const std_msgs::
             }
 
             for (size_t i = 0; i < estimator_config_.window_size + 1;
-                 ++i) {
+                 ++i) {//debug打印
               Twist<double> transform_lb = transform_lb_.cast<double>();
 
               Quaterniond Rs_li(Rs_[i] * transform_lb.rot.inverse());
@@ -598,7 +599,7 @@ void Estimator::ProcessLaserOdom(const Transform &transform_in, const std_msgs::
             }
 
             for (size_t i = 0; i < estimator_config_.window_size + 1;
-                 ++i) {
+                 ++i) {//debug打印
               Twist<double> transform_lb = transform_lb_.cast<double>();
 
               Quaterniond Rs_li(Rs_[i] * transform_lb.rot.inverse());
@@ -709,7 +710,7 @@ void Estimator::ProcessLaserOdom(const Transform &transform_in, const std_msgs::
             ROS_DEBUG_STREAM("deskew time: " << t_deskew.Toc());
 
             DLOG(INFO) << "deskew time: " << t_deskew.Toc();
-          }
+          }//end enable_deskewble 
 
           DLOG(INFO) << ">>>>>>> solving optimization <<<<<<<";
           SolveOptimization();
@@ -875,6 +876,7 @@ void Estimator::ProcessCompactData(const sensor_msgs::PointCloud2ConstPtr &compa
 
 }
 
+
 bool Estimator::RunInitialization() {
 
   // NOTE: check IMU observibility, adapted from VINS-mono
@@ -912,6 +914,9 @@ bool Estimator::RunInitialization() {
       return false;
     }
   }
+  //上面检查是否激励充分(加减速都有,差异较大)
+
+
 
   Eigen::Vector3d g_vec_in_laser;
   bool init_result
@@ -976,6 +981,9 @@ bool Estimator::RunInitialization() {
     return true;
   }
 }
+
+
+
 
 #ifdef USE_CORNER
 void Estimator::CalculateFeatures(const pcl::KdTreeFLANN<PointT>::Ptr &kdtree_surf_from_map,
