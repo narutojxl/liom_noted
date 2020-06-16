@@ -167,6 +167,7 @@ class IntegrationBase {
 
       // NOTE: F = Fd = \Phi = I + dF*dt
       MatrixXd F = MatrixXd::Zero(15, 15);   //和lins中的F一致,只是状态顺序不同,见lins IntegrationBase模块
+
       F.block<3, 3>(0, 0) = Matrix3d::Identity();
       F.block<3, 3>(0, 3) = -0.25 * delta_q.toRotationMatrix() * R_a_0_x * dt * dt +
           -0.25 * result_delta_q.toRotationMatrix() * R_a_1_x * (Matrix3d::Identity() - R_w_x * dt) * dt * dt;
@@ -213,7 +214,7 @@ class IntegrationBase {
 
       //step_jacobian = F;
       //step_V = V;
-      jacobian_ = F * jacobian_; //TODO猜测jacobian的物理意义应该是(预积分测量delta_p  预积分测量delta_q   预积分测量delta_v    ba    bg)分别对各个分量的雅克比
+      jacobian_ = F * jacobian_; //TODO猜测jacobian的物理意义应该是(预积分测量delta_p  预积分测量delta_q   预积分测量delta_v    ba    bg)分别对自己各个分量的雅克比
       covariance_ = F * covariance_ * F.transpose() + V * noise_ * V.transpose(); //TODO公式和lins不一样StatePredictor::predict()
       //F对jacobian和方差的更新，见liom补充材料B.7
     }
@@ -282,7 +283,8 @@ class IntegrationBase {
 //      step_jacobian = F;
 //      step_V = V;
       jacobian_ = F * jacobian_; //计算imu预积分测量残差时要用
-      covariance_ = F * covariance_ * F.transpose() + V * noise * V.transpose();
+      covariance_ = F * covariance_ * F.transpose() + V * noise * V.transpose(); 
+      //将来作为imu预积分残差的权重，残差对优化变量的jacobian权重，见ImuFactor.h::Evaluate()
     }
 
   }
@@ -319,6 +321,7 @@ class IntegrationBase {
   }
  
   //imu预积分测量残差 +　bias更新的残差
+  //liom在滑窗内优化时，会对每相邻两个优化位姿之间计算imu预积分残差,见Estimator::SolveOptimization()
   Matrix<double, 15, 1> Evaluate(const Vector3d &Pi,
                                  const Quaterniond &Qi,
                                  const Vector3d &Vi,

@@ -187,7 +187,7 @@ class Estimator : public MeasurementManager, public PointMapping {
   size_t laser_odom_recv_count_ = 0;
 
   Vector3d acc_last_, gyr_last_;
-  Vector3d g_vec_;
+  Vector3d g_vec_; //g在imu0下
 
   shared_ptr<IntegrationBase> tmp_pre_integration_;
 
@@ -236,9 +236,12 @@ class Estimator : public MeasurementManager, public PointMapping {
 
 //  Transform transform_lb_{Eigen::Quaternionf(1, 0, 0, 0), Eigen::Vector3f(-0.05, 0, 0.05)}; ///< Base to laser transform
   Transform transform_lb_{Eigen::Quaternionf(1, 0, 0, 0), Eigen::Vector3f(0, 0, -0.1)}; ///< Base to laser transform
+  //对于坐标系来说是： laser2body(imu)
 
-  Eigen::Matrix3d R_WI_; ///< R_WI is the rotation from the inertial frame into Lidar's world frame
+  Eigen::Matrix3d R_WI_; ///< R_WI is the rotation from the inertial frame into Lidar's world frame  
   Eigen::Quaterniond Q_WI_; ///< Q_WI is the rotation from the inertial frame into Lidar's world frame
+  //laser0_2_body0(laser0: laser第1帧所在的坐标系，即laser的世界坐标系； body0：imu世界坐标系）
+  //简写为：l0_2_b0
 
   tf::StampedTransform wi_trans_, laser_local_trans_, laser_predict_trans_;
   tf::TransformBroadcaster tf_broadcaster_est_;
@@ -279,9 +282,9 @@ class Estimator : public MeasurementManager, public PointMapping {
   CircularBuffer<StampedTransform> imu_stampedtransforms{100};
 
  private:
-  double **para_pose_;
-  double **para_speed_bias_;
-  double para_ex_pose_[SIZE_POSE];
+  double **para_pose_; //size：estimator_config_.opt_window_size + 1
+  double **para_speed_bias_; //size：estimator_config_.opt_window_size + 1
+  double para_ex_pose_[SIZE_POSE];//外参
 //  double para_qwi_[SIZE_QUAT];
   double g_norm_;
   bool gravity_fixed_ = false;
