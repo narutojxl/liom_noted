@@ -40,36 +40,37 @@ PivotPointPlaneFactor::PivotPointPlaneFactor(const Eigen::Vector3d &point,
 /// add new point and coeff
 }
 
+
 bool PivotPointPlaneFactor::Evaluate(double const *const *parameters, double *residuals, double **jacobians) const {
   TicToc tic_toc;
 
-  Eigen::Vector3d P_pivot(parameters[0][0], parameters[0][1], parameters[0][2]);
+  Eigen::Vector3d P_pivot(parameters[0][0], parameters[0][1], parameters[0][2]);  //b0_bpivot_(p, q)
   Eigen::Quaterniond Q_pivot(parameters[0][6], parameters[0][3], parameters[0][4], parameters[0][5]);
 
-  Eigen::Vector3d Pi(parameters[1][0], parameters[1][1], parameters[1][2]);
+  Eigen::Vector3d Pi(parameters[1][0], parameters[1][1], parameters[1][2]); //b0_bk_(p, q)
   Eigen::Quaterniond Qi(parameters[1][6], parameters[1][3], parameters[1][4], parameters[1][5]);
 
-  Eigen::Vector3d tlb(parameters[2][0], parameters[2][1], parameters[2][2]);
+  Eigen::Vector3d tlb(parameters[2][0], parameters[2][1], parameters[2][2]); //外参
   Eigen::Quaterniond qlb(parameters[2][6], parameters[2][3], parameters[2][4], parameters[2][5]);
 
 //  Eigen::Vector3d tlb = transform_lb_.pos;
 //  Eigen::Quaterniond qlb = transform_lb_.rot;
 
-  Eigen::Quaterniond Qlpivot = Q_pivot * qlb.conjugate();
-  Eigen::Vector3d Plpivot = P_pivot - Qlpivot * tlb;
+  Eigen::Quaterniond Qlpivot = Q_pivot * qlb.conjugate(); //b0_lpivot_q
+  Eigen::Vector3d Plpivot = P_pivot - Qlpivot * tlb; //b0_lpivot_p
 
-  Eigen::Quaterniond Qli = Qi * qlb.conjugate();
-  Eigen::Vector3d Pli = Pi - Qli * tlb;
+  Eigen::Quaterniond Qli = Qi * qlb.conjugate(); //b0_lk_q
+  Eigen::Vector3d Pli = Pi - Qli * tlb; //b0_lk_p
 
-  Eigen::Quaterniond Qlpi = Qlpivot.conjugate() * Qli;
-  Eigen::Vector3d Plpi = Qlpivot.conjugate() * (Pli - Plpivot);
+  Eigen::Quaterniond Qlpi = Qlpivot.conjugate() * Qli; //pivot_k_q
+  Eigen::Vector3d Plpi = Qlpivot.conjugate() * (Pli - Plpivot); //pivot_k_p
 
-  Eigen::Vector3d w(coeff_.x(), coeff_.y(), coeff_.z());
+  Eigen::Vector3d w(coeff_.x(), coeff_.y(), coeff_.z()); 
   double b = coeff_.w();
 
-  double residual = (w.transpose() * (Qlpi * point_ + Plpi) + b);
+  double residual = (w.transpose() * (Qlpi * point_ + Plpi) + b); //TODO：残差方式和lins, lego_loam都不一样。后两个都是coeff_.w(),没有前面的项
 
-  double sqrt_info = sqrt_info_static;
+  double sqrt_info = sqrt_info_static; //1.0
 
   residuals[0] = sqrt_info * residual;
 
@@ -78,35 +79,35 @@ bool PivotPointPlaneFactor::Evaluate(double const *const *parameters, double *re
     Eigen::Matrix3d Rp = Q_pivot.toRotationMatrix();
     Eigen::Matrix3d rlb = qlb.toRotationMatrix();
 
-    if (jacobians[0]) {
-      Eigen::Map<Eigen::Matrix<double, 1, 7, Eigen::RowMajor> > jacobian_pose_pivot(jacobians[0]);
+    if (jacobians[0]) {//对第一个参数块：pivot帧的位姿: b0_bpivot_(p, q), 令(Rp, tp)
+      Eigen::Map<Eigen::Matrix<double, 1, 7, Eigen::RowMajor> > jacobian_pose_pivot(jacobians[0]); //TODO: 1*6?
       Eigen::Matrix<double, 1, 6> jaco_pivot;
 
-      jaco_pivot.leftCols<3>() = -w.transpose() * rlb * Rp.transpose();
+      jaco_pivot.leftCols<3>() = -w.transpose() * rlb * Rp.transpose(); //对tp
       jaco_pivot.rightCols<3>() =
           w.transpose() * rlb * (SkewSymmetric(Rp.transpose() * Ri * rlb.transpose() * (point_ - tlb))
-              + SkewSymmetric(Rp.transpose() * (Pi - P_pivot)));
+              + SkewSymmetric(Rp.transpose() * (Pi - P_pivot))); //TODO对Rp,待验证
 
       jacobian_pose_pivot.setZero();
       jacobian_pose_pivot.leftCols<6>() = sqrt_info * jaco_pivot;
       jacobian_pose_pivot.rightCols<1>().setZero();
     }
 
-    if (jacobians[1]) {
+    if (jacobians[1]) {//第二个参数块：b0_bk_(p, q), 令(R, t)
       Eigen::Map<Eigen::Matrix<double, 1, 7, Eigen::RowMajor> > jacobian_pose_i(jacobians[1]);
       Eigen::Matrix<double, 1, 6> jaco_i;
 
-      jaco_i.leftCols<3>() = w.transpose() * rlb * Rp.transpose();
+      jaco_i.leftCols<3>() = w.transpose() * rlb * Rp.transpose(); //对t
       jaco_i.rightCols<3>() =
           w.transpose() * rlb * Rp.transpose() * Ri * (-SkewSymmetric(rlb.transpose() * point_)
-              + SkewSymmetric(rlb.transpose() * tlb));
+              + SkewSymmetric(rlb.transpose() * tlb)); //TODO对R,待验证
 
       jacobian_pose_i.setZero();
       jacobian_pose_i.leftCols<6>() = sqrt_info * jaco_i;
       jacobian_pose_i.rightCols<1>().setZero();
     }
 
-    if (jacobians[2]) {
+    if (jacobians[2]) {//第三个参数块：外参lb,令（delta_R, delta_t）
       Eigen::Map<Eigen::Matrix<double, 1, 7, Eigen::RowMajor> > jacobian_pose_ex(jacobians[2]);
       jacobian_pose_ex.setZero();
 
@@ -121,11 +122,13 @@ bool PivotPointPlaneFactor::Evaluate(double const *const *parameters, double *re
       Eigen::Matrix<double, 1, 6> jaco_ex;
       //  NOTE: planar extrinsic
 //       jaco_ex.leftCols<3>() = w.transpose() * (I3x3 - rlb * Rp.transpose() * Ri * rlb.transpose()) * right_info_mat;
-      jaco_ex.leftCols<3>() = w.transpose() * (I3x3 - rlb * Rp.transpose() * Ri * rlb.transpose());
+      jaco_ex.leftCols<3>() = w.transpose() * (I3x3 - rlb * Rp.transpose() * Ri * rlb.transpose()); 
+      //TODO:我求出来的是 w.transpose() * (I3x3 + rlb * Rp.transpose() * Ri) 
+
       jaco_ex.rightCols<3>() =
           w.transpose() * rlb * (-SkewSymmetric(Rp.transpose() * Ri * rlb.transpose() * (point_ - tlb))
               + Rp.transpose() * Ri * SkewSymmetric(rlb.transpose() * (point_ - tlb))
-              - SkewSymmetric(Rp.transpose() * (Pi - P_pivot)));
+              - SkewSymmetric(Rp.transpose() * (Pi - P_pivot))); //TODO:待验证
 
       jacobian_pose_ex.setZero();
       jacobian_pose_ex.leftCols<6>() = sqrt_info * jaco_ex;

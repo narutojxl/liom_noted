@@ -41,7 +41,7 @@ namespace lio {
 
 using namespace mathutils;
 
-class ImuFactor : public ceres::SizedCostFunction<15, 7, 9, 7, 9> { //残差first 
+class ImuFactor : public ceres::SizedCostFunction<15, 7, 9, 7, 9> { //TODO15,6,9,6,9
 
  public:
   ImuFactor() = delete;
@@ -81,10 +81,12 @@ class ImuFactor : public ceres::SizedCostFunction<15, 7, 9, 7, 9> { //残差firs
     //  和(Bgi - pre_integration_->linearized_bg_)更新测量值，然后再带到残差表达式中
     //残差 r = [预积分位置测量残差项  预积分旋转测量残差项  预积分速度测量残差项   delta_ba   delta_bg]
     // r = [rp rq rv rba rbg]  
+    //预积分paper作者给出的是残差对变量的增量的雅克比, 不是对状态的雅克比。
+
 
     Eigen::Matrix<double, 15, 15> sqrt_info =
         Eigen::LLT<Eigen::Matrix<double, 15, 15>>(pre_integration_->covariance_.inverse()).matrixL().transpose();//预积分的方差作为残差的权重
-
+    //Cholesky分解
     residual = sqrt_info * residual; 
     
     if (jacobians) {
@@ -102,7 +104,7 @@ class ImuFactor : public ceres::SizedCostFunction<15, 7, 9, 7, 9> { //残差firs
       }
 
       if (jacobians[0]) {//残差对第一个参数块(pi, qi)
-        Eigen::Map<Eigen::Matrix<double, 15, 6, Eigen::RowMajor>> jacobian_pose_i(jacobians[0]); //TODO: default维度为15*7,我改过来
+        Eigen::Map<Eigen::Matrix<double, 15, 7, Eigen::RowMajor>> jacobian_pose_i(jacobians[0]); //TODO:15*6 ?
         jacobian_pose_i.setZero();
 
         jacobian_pose_i.block<3, 3>(O_P, O_P) = -Qi.inverse().toRotationMatrix(); //rp对pi
@@ -113,8 +115,8 @@ class ImuFactor : public ceres::SizedCostFunction<15, 7, 9, 7, 9> { //残差firs
             pre_integration_->delta_q_ * DeltaQ(dq_dbg * (Bgi - pre_integration_->linearized_bg_));
         jacobian_pose_i.block<3, 3>(O_R, O_R) = //rq对qi
             -(LeftQuatMatrix(Qj.inverse() * Qi) * RightQuatMatrix(corrected_delta_q)).topLeftCorner<3, 3>();
-            //TODO我求出来的是: -(Qj.toRotationMatrix()).transpose() * (Qi.toRotationMatrix())
-            //不含修正的预积分旋转测量值
+            //TODO按照右扰动我求出来的是: -(Qj.toRotationMatrix()).transpose() * (Qi.toRotationMatrix())
+            //预积分文章中是对李代数求导，结果中含有右雅克比
         
         jacobian_pose_i.block<3, 3>(O_V, O_R) = //rv对qi
             SkewSymmetric(Qi.inverse() * (-g_vec_ * sum_dt + Vj - Vi));
@@ -150,7 +152,7 @@ class ImuFactor : public ceres::SizedCostFunction<15, 7, 9, 7, 9> { //残差firs
 
       }
       if (jacobians[2]) {//对第三个参数块(pj, qj)
-        Eigen::Map<Eigen::Matrix<double, 15, 6, Eigen::RowMajor>> jacobian_pose_j(jacobians[2]); //TODO: default维度为15*7,我们改过来
+        Eigen::Map<Eigen::Matrix<double, 15, 7, Eigen::RowMajor>> jacobian_pose_j(jacobians[2]); //TODO:15*6 ?
         jacobian_pose_j.setZero();
 
         jacobian_pose_j.block<3, 3>(O_P, O_P) = Qi.inverse().toRotationMatrix(); //r_p对pj
@@ -159,7 +161,7 @@ class ImuFactor : public ceres::SizedCostFunction<15, 7, 9, 7, 9> { //残差firs
             pre_integration_->delta_q_ * DeltaQ(dq_dbg * (Bgi - pre_integration_->linearized_bg_));
         jacobian_pose_j.block<3, 3>(O_R, O_R) = //r_q对qj
             LeftQuatMatrix(corrected_delta_q.inverse() * Qi.inverse() * Qj).topLeftCorner<3, 3>();
-        //TODO我求出来的是： I
+        //TODO按照右扰动我求出来的是： I
 
         jacobian_pose_j = sqrt_info * jacobian_pose_j;
 

@@ -113,6 +113,7 @@ inline float CalcSquaredPointDistance(const PointT &p) {
 
 static const Eigen::Matrix3d I3x3 = Eigen::Matrix3d::Identity();
 
+//轴角到四元数
 template<typename Derived>
 inline Eigen::Quaternion<typename Derived::Scalar> DeltaQ(const Eigen::MatrixBase<Derived> &theta) {
   typedef typename Derived::Scalar Scalar_t;

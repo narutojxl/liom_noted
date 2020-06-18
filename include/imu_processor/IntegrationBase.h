@@ -217,6 +217,8 @@ class IntegrationBase {
       jacobian_ = F * jacobian_; //TODO猜测jacobian的物理意义应该是(预积分测量delta_p  预积分测量delta_q   预积分测量delta_v    ba    bg)分别对自己各个分量的雅克比
       covariance_ = F * covariance_ * F.transpose() + V * noise_ * V.transpose(); //TODO公式和lins不一样StatePredictor::predict()
       //F对jacobian和方差的更新，见liom补充材料B.7
+      //TODO预积分的方差迭代计算为什么不用预积分paper中给的方差迭代公式，而是用的是误差状态的方差迭代公式？
+      //https://github.com/hyye/lio-mapping/issues/36 
     }
 
   }

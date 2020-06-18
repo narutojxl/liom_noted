@@ -45,7 +45,7 @@ namespace lio {
 
 using namespace mathutils;
 
-class PivotPointPlaneFactor : public ceres::SizedCostFunction<1, 7, 7, 7> {
+class PivotPointPlaneFactor : public ceres::SizedCostFunction<1, 7, 7, 7> {//残差first
 
  public:
   PivotPointPlaneFactor(const Eigen::Vector3d &point,
@@ -53,8 +53,8 @@ class PivotPointPlaneFactor : public ceres::SizedCostFunction<1, 7, 7, 7> {
   virtual bool Evaluate(double const *const *parameters, double *residuals, double **jacobians) const;
   void Check(double **parameters);
 
-  Eigen::Vector3d point_;
-  Eigen::Vector4d coeff_;
+  Eigen::Vector3d point_; //窗口内在自己帧下的点, p_raw
+  Eigen::Vector4d coeff_; //残差对pi的雅克比，pi由p_raw转换而来
 
   // TODO: necessary?
 //  static Eigen::Matrix3d sqrt_info;

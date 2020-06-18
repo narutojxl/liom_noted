@@ -46,6 +46,8 @@ struct Feature {
   }
 };
 
+
+//点特征
 struct PointNormalFeature : public Feature {
  public:
   PointNormalFeature() {
@@ -81,6 +83,8 @@ struct PointNormalFeature : public Feature {
 
 };
 
+
+//面特征
 struct PointPlaneFeature : public Feature {
   PointPlaneFeature() {
     feature_name = "PointPlaneFeature";
@@ -101,15 +105,15 @@ struct PointPlaneFeature : public Feature {
     *derived_feature = this->GetFeatureInner();
   }
 
-  double score;
-  Eigen::Vector3d point;
-  Eigen::Vector4d coeffs;
+  double score; //点到平面的距离,将来作为残差权重，越远权重越小
+  Eigen::Vector3d point; //窗口内在自己帧下的点, p_raw
+  Eigen::Vector4d coeffs; //残差对pi的雅克比，pi由p_raw转换而来
 
   EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 };
 
 struct FeaturePerFrame {
-  int id;
+  int id; //滑窗内的帧号
   std::vector<unique_ptr<Feature>> features;
 };
 
