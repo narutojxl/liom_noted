@@ -12,7 +12,7 @@ map_filter_size: 0.6
 window_size: 7  #indoor is 12
 opt_window_size: 5 #indoor is 7
 
-init_window_factor: 1 #indoor is 2
+init_window_factor: 1 #indoor is 2  # a factor makes the local window of initialization longer.
 
 # Extrinsic parameter between IMU and Camera (adapted from VINS-mono)
 estimate_extrinsic: 1   # 0  Have an accurate extrinsic parameters. We will trust the following imu^R_cam, imu^T_cam, don't change it.
@@ -41,12 +41,12 @@ run_optimization: 1
 update_laser_imu: 1 #update the optimized states, just for debugging
 gravity_fix: 1 #debug only
 
-plane_projection_factor: 0
+plane_projection_factor: 0 #没有使用
 
 imu_factor: 1 #是否使用imu.为0时其实和没有使用imu的loam一样，不涉及imu预积分，初始化，残差，紧耦合的东西
-point_distance_factor: 1
+point_distance_factor: 1 #laser factor
 
-prior_factor: 0
+prior_factor: 0 #是否把外参factor加进去
 
 marginalization_factor: 1
 
@@ -62,7 +62,7 @@ gyr_w: 2.0e-5 #gyr bias随机游走的强度
 g_norm: 9.80
 
 # lidar deskew
-enable_deskew: 1
+enable_deskew: 1 #去畸变
 cutoff_deskew: 0 #1：turn off deskewing, when using corrected point cloud data, like KITTI.
 
 keep_features: 0 #indoor is 1. keep the previously calculated features or not

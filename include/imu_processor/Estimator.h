@@ -195,7 +195,7 @@ class Estimator : public MeasurementManager, public PointMapping {
 
   CircularBuffer<PairTimeLaserTransform> all_laser_transforms_{estimator_config_.window_size + 1};
 
-  CircularBuffer<Vector3d> Ps_{estimator_config_.window_size + 1};
+  CircularBuffer<Vector3d> Ps_{estimator_config_.window_size + 1}; //窗口内b0_bk_(p, v, q), ba, bg
   CircularBuffer<Matrix3d> Rs_{estimator_config_.window_size + 1};
   CircularBuffer<Vector3d> Vs_{estimator_config_.window_size + 1};
   CircularBuffer<Vector3d> Bas_{estimator_config_.window_size + 1};
@@ -230,7 +230,6 @@ class Estimator : public MeasurementManager, public PointMapping {
   CircularBuffer<vector<size_t> > opt_valid_idx_{estimator_config_.opt_window_size + 1};
   CircularBuffer<PointCloudPtr> opt_corner_stack_{estimator_config_.opt_window_size + 1};
   CircularBuffer<PointCloudPtr> opt_surf_stack_{estimator_config_.opt_window_size + 1};
-
   CircularBuffer<Eigen::Matrix<double, 6, 6>> opt_matP_{estimator_config_.opt_window_size + 1};
   ///< optimization buffers
 
@@ -289,7 +288,7 @@ class Estimator : public MeasurementManager, public PointMapping {
   double g_norm_;
   bool gravity_fixed_ = false;
 
-  Transform transform_tobe_mapped_bef_; //后端计算的curr在map下的位姿
+  Transform transform_tobe_mapped_bef_; //没有啥用处
   Transform transform_es_;
 
   // for marginalization

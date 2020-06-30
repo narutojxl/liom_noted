@@ -378,7 +378,7 @@ void Estimator::ProcessImu(double dt,
 //  }
 
   // NOTE: Do not update tmp_pre_integration_ until first laser comes
-  if (cir_buf_count_ != 0) {//已经处理了第一帧laser
+  if (cir_buf_count_ != 0) {//已经处理了第一帧laser; 当已经为初始化状态时 cir_buf_count_ == estimator_config_.window_size
 
     tmp_pre_integration_->push_back(dt, linear_acceleration, angular_velocity); //用当前的imu数据做预积分，更新方差，更新jacobian
 
@@ -390,8 +390,11 @@ void Estimator::ProcessImu(double dt,
     Vector3d un_acc_0 = Rs_[j] * (acc_last_ - Bas_[j]) + g_vec_;
     Vector3d un_gyr = 0.5 * (gyr_last_ + angular_velocity) - Bgs_[j];
     Rs_[j] *= DeltaQ(un_gyr * dt).toRotationMatrix(); //累乘  
+    //未初始化阶段：
     //以当前pair measurement中的第一个imu为原点。 每处理一次imu，把imu状态(PVQ)往前推一个dt。
     //当把该pair中所有imu meas 循环完, 得到的PVQ是两相邻laser间delta_P, delta_V, delta_Q,即这里的Ps_[j], Vs_[j], Rs_[j] 
+    //当已经为初始化阶段时：
+    //Ps_[j], Vs_[j], Rs_[j]为当前imu时刻，imu在b0下的PVQ
 
     Vector3d un_acc_1 = Rs_[j] * (linear_acceleration - Bas_[j]) + g_vec_;
     Vector3d un_acc = 0.5 * (un_acc_0 + un_acc_1);
@@ -402,7 +405,7 @@ void Estimator::ProcessImu(double dt,
     imu_tt.time = header.stamp.toSec();
     imu_tt.transform.pos = Ps_[j].cast<float>(); 
     imu_tt.transform.rot = Eigen::Quaternionf(Rs_[j].cast<float>());
-    imu_stampedtransforms.push(imu_tt); //delta_p, delta_q 压入缓存 
+    imu_stampedtransforms.push(imu_tt);
 //    DLOG(INFO) << imu_tt.transform;
   }
   acc_last_ = linear_acceleration;
@@ -436,7 +439,7 @@ void Estimator::ProcessLaserOdom(const Transform &transform_in, const std_msgs::
   //未初始化阶段：
   //transform_in: 当前帧laser在map下位姿
   //已经初始化阶段：
-  //???
+  //transform_in：初始化时刻loam后端得到的那帧laser在l0下的位姿
 
   ROS_DEBUG(">>>>>>> new laser odom coming <<<<<<<");
 
@@ -447,7 +450,7 @@ void Estimator::ProcessLaserOdom(const Transform &transform_in, const std_msgs::
     return;
   }
 
-  //已经初始化 或者 未初始化阶段，余数 == 0
+  //已经初始化或者(未初始化阶段，余数 == 0 )
 
   Headers_.push(header);
 
@@ -469,20 +472,18 @@ void Estimator::ProcessLaserOdom(const Transform &transform_in, const std_msgs::
 
   all_laser_transforms_.push(make_pair(header.stamp.toSec(), laser_transform)); 
   //把当前帧的位姿 +　last帧到curr帧的imu数据，包括对这些imu数据的预积分存放到窗口内
-
+  //all_laser_transforms_: 只在状态未初始化时使用；在状态已经为初始化状态时，不使用。
 
 
   // TODO: check extrinsic parameter estimation
 
   // NOTE: push PointMapping's point_coeff_map_
-
-  ///> optimization buffers
+  ///> optimization buffers   这些变量都是和未初始化阶段相关的变量
   opt_point_coeff_mask_.push(false); // default new frame
-  opt_point_coeff_map_.push(score_point_coeff_); //存的是当前帧对残差有贡献的surf points每个点的 <score, <curr surf point, 对应的平面单位法向量>
+  opt_point_coeff_map_.push(score_point_coeff_); //存的是未初始化阶段当前帧对残差有贡献的surf points每个点的 <score, <curr surf point, 对应的平面单位法向量>
   opt_cube_centers_.push(CubeCenter{laser_cloud_cen_length_, laser_cloud_cen_width_, laser_cloud_cen_height_});
   opt_transforms_.push(laser_transform.transform);
   opt_valid_idx_.push(laser_cloud_valid_idx_);
-
 
   // TODO: avoid memory allocation?
   if (stage_flag_ != INITED || (!estimator_config_.enable_deskew && !estimator_config_.cutoff_deskew)) {//enable_deskew == true, 即未初始化阶段
@@ -492,13 +493,12 @@ void Estimator::ProcessLaserOdom(const Transform &transform_in, const std_msgs::
     corner_stack_.push(boost::make_shared<PointCloud>(*laser_cloud_corner_stack_downsampled_)); //curr less sharp points
     size_corner_stack_.push(laser_cloud_corner_stack_downsampled_->size());
   }
-
-  full_stack_.push(boost::make_shared<PointCloud>(*full_cloud_)); //curr帧
-
-  opt_surf_stack_.push(surf_stack_.last()); //最新的data
+  
+  //这些变量都是和未初始化阶段相关的变量
+  full_stack_.push(boost::make_shared<PointCloud>(*full_cloud_)); //curr帧,该变量没有啥用处
+  opt_surf_stack_.push(surf_stack_.last()); //未初始化那个阶段最新的data
   opt_corner_stack_.push(corner_stack_.last());
-
-  opt_matP_.push(matP_.cast<double>()); //发生在loam退化时，对解进行修正的矩阵
+  opt_matP_.push(matP_.cast<double>()); //发生在loam退化时，对解进行修正的矩阵,该变量没有啥用处
   ///< optimization buffers
 
 
@@ -636,7 +636,7 @@ void Estimator::ProcessLaserOdom(const Transform &transform_in, const std_msgs::
 
         // WARNING
 
-        if (opt_point_coeff_map_.size() == estimator_config_.opt_window_size + 1) {
+        if (opt_point_coeff_map_.size() == estimator_config_.opt_window_size + 1) {//当状态为已经初始化的状态时，该if条件满足
 
           if (estimator_config_.enable_deskew || estimator_config_.cutoff_deskew) {
             TicToc t_deskew;
@@ -644,11 +644,11 @@ void Estimator::ProcessLaserOdom(const Transform &transform_in, const std_msgs::
             // TODO: the coefficients to be parameterized
             DLOG(INFO) << ">>>>>>> de-skew points <<<<<<<";
             LOG_ASSERT(imu_stampedtransforms.size() > 0) << "no imu data";
-            double time_e = imu_stampedtransforms.last().time;
+            double time_e = imu_stampedtransforms.last().time; //当前pair measurement中，最新的imu帧(即和当前laser帧挨的最近)
             Transform transform_e = imu_stampedtransforms.last().transform;
             double time_s = imu_stampedtransforms.last().time;
             Transform transform_s = imu_stampedtransforms.last().transform;
-            for (int i = int(imu_stampedtransforms.size()) - 1; i >= 0; --i) {
+            for (int i = int(imu_stampedtransforms.size()) - 1; i >= 0; --i) {//找出和最新的imu时间戳大于0.1s的那帧imu(即和上一laser帧挨得最近)
               time_s = imu_stampedtransforms[i].time;
               transform_s = imu_stampedtransforms[i].transform;
               if (time_e - imu_stampedtransforms[i].time >= 0.1) {
@@ -660,7 +660,7 @@ void Estimator::ProcessLaserOdom(const Transform &transform_in, const std_msgs::
 //            vel2 = Rs_[estimator_config_.window_size].transpose() * Vs_[estimator_config_.window_size];
 //            body_velocity = (vel1 + vel2) / 2;
 
-            Transform transform_body_es = transform_e.inverse() * transform_s;
+            Transform transform_body_es = transform_e.inverse() * transform_s; //当前帧laser到上一帧laser的TF
 //            transform_body_es.pos = -0.1 * body_velocity.cast<float>();
             {
               float s = 0.1 / (time_e - time_s);
@@ -790,9 +790,10 @@ void Estimator::ProcessLaserOdom(const Transform &transform_in, const std_msgs::
 void Estimator::ProcessCompactData(const sensor_msgs::PointCloud2ConstPtr &compact_data,
                                    const std_msgs::Header &header) {
   /// 1. process compact data
-  PointMapping::CompactDataHandler(compact_data); //通过调用后端的"/compact_data"topic回调函数把数据传过去
+  PointMapping::CompactDataHandler(compact_data); //调用PointMapping类的函数，解析前端发布的"/compact_data"topic，把数据传过来
 
-  if (stage_flag_ == INITED) {//已经处理了滑窗大小个laser帧，且已经初始化成功
+  //jxl: 这个if没啥作用
+  if (stage_flag_ == INITED) {//已经处理了滑窗大小个laser帧，且状态已经初始化成功
     Transform trans_prev(Eigen::Quaterniond(Rs_[estimator_config_.window_size - 1]).cast<float>(),
                          Ps_[estimator_config_.window_size - 1].cast<float>());
     Transform trans_curr(Eigen::Quaterniond(Rs_.last()).cast<float>(),
@@ -800,7 +801,7 @@ void Estimator::ProcessCompactData(const sensor_msgs::PointCloud2ConstPtr &compa
 
     Transform d_trans = trans_prev.inverse() * trans_curr;
 
-    Transform transform_incre(transform_bef_mapped_.inverse() * transform_sum_.transform());
+    Transform transform_incre(transform_bef_mapped_.inverse() * transform_sum_.transform()); //没有用处
 
 //    DLOG(INFO) << "base incre in laser world: " << d_trans;
 //    DLOG(INFO) << "incre in laser world: " << transform_incre;
@@ -821,7 +822,8 @@ void Estimator::ProcessCompactData(const sensor_msgs::PointCloud2ConstPtr &compa
 
   }
   
-  //estimator_config_.imu_factor = 1(config文件中), 所以该代码执行的条件是stage_flag_ != INITED，即未初始化阶段
+
+  // estimator_config_.imu_factor = 1(config文件中), 所以该代码执行的条件是stage_flag_ != INITED，即未初始化阶段
   if (stage_flag_ != INITED || !estimator_config_.imu_factor) {//即未初始化阶段
     /// 2. process decoded data
     PointMapping::Process(); //调用loam的后端，获得当前帧laser在laser_0下的位姿
@@ -862,9 +864,9 @@ void Estimator::ProcessCompactData(const sensor_msgs::PointCloud2ConstPtr &compa
   Transform transform_to_init_ = transform_aft_mapped_;
   ProcessLaserOdom(transform_to_init_, header); 
   //未初始化阶段：
-  //transform_to_init_: 当前帧laser在map(laser0)下位姿
+  //transform_to_init_: 通过调用loam后端获得的当前帧laser在map(laser0)下位姿
   //已经初始化阶段：
-  //???
+  //transform_to_init_：初始化时刻loam后端得到的那帧laser在l0下的位姿
 
 // NOTE: will be updated in PointMapping's OptimizeTransformTobeMapped
 //  if (stage_flag_ == INITED && !estimator_config_.imu_factor) {
@@ -1685,7 +1687,7 @@ void Estimator::BuildLocalMap(vector<FeaturePerFrame> &feature_frames) {
 
 }
 
-
+//solve函数只在初始化成功后的那次laser帧处理时调用和后面已经处于初始化状态每次处理laser帧时都会调用
 void Estimator::SolveOptimization() {
   if (cir_buf_count_ < estimator_config_.window_size && estimator_config_.imu_factor) {
     LOG(ERROR) << "enter optimization before enough count: " << cir_buf_count_ << " < "
@@ -1705,78 +1707,78 @@ void Estimator::SolveOptimization() {
   loss_function = new ceres::CauchyLoss(1.0);
 
   // NOTE: update from laser transform
-  if (estimator_config_.update_laser_imu) { //用来debug,可忽略
-    DLOG(INFO) << "======= bef opt =======";
+//   if (estimator_config_.update_laser_imu) { //用来debug,可忽略
+//     DLOG(INFO) << "======= bef opt =======";
 
-    if (!estimator_config_.imu_factor) { //不执行
-      Twist<double>
-          incre = (transform_lb_.inverse() * all_laser_transforms_[cir_buf_count_ - 1].second.transform.inverse()
-            * all_laser_transforms_[cir_buf_count_].second.transform * transform_lb_).cast<double>();
-      Ps_[cir_buf_count_] = Rs_[cir_buf_count_ - 1] * incre.pos + Ps_[cir_buf_count_ - 1];
-      Rs_[cir_buf_count_] = Rs_[cir_buf_count_ - 1] * incre.rot;
-    }
+//     if (!estimator_config_.imu_factor) { //不执行
+//       Twist<double>
+//           incre = (transform_lb_.inverse() * all_laser_transforms_[cir_buf_count_ - 1].second.transform.inverse()
+//             * all_laser_transforms_[cir_buf_count_].second.transform * transform_lb_).cast<double>();
+//       Ps_[cir_buf_count_] = Rs_[cir_buf_count_ - 1] * incre.pos + Ps_[cir_buf_count_ - 1];
+//       Rs_[cir_buf_count_] = Rs_[cir_buf_count_ - 1] * incre.rot;
+//     }
 
-    Twist<double> transform_lb = transform_lb_.cast<double>();
-    int pivot_idx = int(estimator_config_.window_size - estimator_config_.opt_window_size);
+//     Twist<double> transform_lb = transform_lb_.cast<double>();
+//     int pivot_idx = int(estimator_config_.window_size - estimator_config_.opt_window_size);
 
-    Eigen::Vector3d Ps_pivot = Ps_[pivot_idx]; //b0_bpivot_p
-    Eigen::Vector3d Vs_pivot = Vs_[pivot_idx]; //b0_bpivot_v
-    Eigen::Matrix3d Rs_pivot = Rs_[pivot_idx]; //b0_bpivot_r
+//     Eigen::Vector3d Ps_pivot = Ps_[pivot_idx]; //b0_bpivot_p
+//     Eigen::Vector3d Vs_pivot = Vs_[pivot_idx]; //b0_bpivot_v
+//     Eigen::Matrix3d Rs_pivot = Rs_[pivot_idx]; //b0_bpivot_r
 
-    Quaterniond rot_pivot(Rs_pivot * transform_lb.rot.inverse()); //b0_lpivot_r
-    Eigen::Vector3d pos_pivot = Ps_pivot - rot_pivot * transform_lb.pos; //b0_lpivot_p
+//     Quaterniond rot_pivot(Rs_pivot * transform_lb.rot.inverse()); //b0_lpivot_r
+//     Eigen::Vector3d pos_pivot = Ps_pivot - rot_pivot * transform_lb.pos; //b0_lpivot_p
 
-    Twist<double> transform_pivot = Twist<double>(rot_pivot, pos_pivot);
+//     Twist<double> transform_pivot = Twist<double>(rot_pivot, pos_pivot);
 
-    vector<Transform> imu_poses, lidar_poses;
+//     vector<Transform> imu_poses, lidar_poses;
 
-    for (int i = 0; i < estimator_config_.opt_window_size + 1; ++i) {
-      int opt_i = int(estimator_config_.window_size - estimator_config_.opt_window_size + i);
+//     for (int i = 0; i < estimator_config_.opt_window_size + 1; ++i) {
+//       int opt_i = int(estimator_config_.window_size - estimator_config_.opt_window_size + i);
 
-      Quaterniond rot_li(Rs_[opt_i] * transform_lb.rot.inverse()); //b0_lk_r
-      Eigen::Vector3d pos_li = Ps_[opt_i] - rot_li * transform_lb.pos; //b0_lk_p
-      Twist<double> transform_li = Twist<double>(rot_li, pos_li);
+//       Quaterniond rot_li(Rs_[opt_i] * transform_lb.rot.inverse()); //b0_lk_r
+//       Eigen::Vector3d pos_li = Ps_[opt_i] - rot_li * transform_lb.pos; //b0_lk_p
+//       Twist<double> transform_li = Twist<double>(rot_li, pos_li);
 
-      // DLOG(INFO) << "Ps_[" << opt_i << "] bef: " << Ps_[opt_i].transpose();
-      // DLOG(INFO) << "Vs_[" << opt_i << "]: bef " << Vs_[opt_i].transpose();
-      /*
-      DLOG(INFO) << "Vs_[" << opt_i << "]: " << Vs_[opt_i].transpose();
-      DLOG(INFO) << "Rs_[" << opt_i << "]: " << Eigen::Quaterniond(Rs_[opt_i]).coeffs().transpose();
-      DLOG(INFO) << "Bas_[" << opt_i << "]: " << Bas_[opt_i].transpose();
-      DLOG(INFO) << "Bgs_[" << opt_i << "]: " << Bgs_[opt_i].transpose();
-      */
-      // DLOG(INFO) << "transform_lb_: " << transform_lb_;
-      // DLOG(INFO) << "gravity in world: " << g_vec_.transpose();
+//       // DLOG(INFO) << "Ps_[" << opt_i << "] bef: " << Ps_[opt_i].transpose();
+//       // DLOG(INFO) << "Vs_[" << opt_i << "]: bef " << Vs_[opt_i].transpose();
+//       /*
+//       DLOG(INFO) << "Vs_[" << opt_i << "]: " << Vs_[opt_i].transpose();
+//       DLOG(INFO) << "Rs_[" << opt_i << "]: " << Eigen::Quaterniond(Rs_[opt_i]).coeffs().transpose();
+//       DLOG(INFO) << "Bas_[" << opt_i << "]: " << Bas_[opt_i].transpose();
+//       DLOG(INFO) << "Bgs_[" << opt_i << "]: " << Bgs_[opt_i].transpose();
+//       */
+//       // DLOG(INFO) << "transform_lb_: " << transform_lb_;
+//       // DLOG(INFO) << "gravity in world: " << g_vec_.transpose();
 
-      Twist<double> transform_bi = Twist<double>(Eigen::Quaterniond(Rs_[opt_i]), Ps_[opt_i]);
-      imu_poses.push_back(transform_bi.cast<float>()); //b0_bk
-      lidar_poses.push_back(transform_li.cast<float>()); //b0_lk
-    }
+//       Twist<double> transform_bi = Twist<double>(Eigen::Quaterniond(Rs_[opt_i]), Ps_[opt_i]);
+//       imu_poses.push_back(transform_bi.cast<float>()); //b0_bk
+//       lidar_poses.push_back(transform_li.cast<float>()); //b0_lk
+//     }
 
-    //region Check for imu res
-//    for (int i = 0; i < estimator_config_.window_size; ++i) {
-//
-//      typedef Eigen::Matrix<double, 15, 15> M15;
-//      typedef Eigen::Matrix<double, 15, 1> V15;
-//      M15 sqrt_info =
-//          Eigen::LLT<M15>(pre_integrations_[i + 1]->covariance_.inverse()).matrixL().transpose();
-//
-//      V15 res = (pre_integrations_[i + 1]->Evaluate(
-//          Ps_[i], Eigen::Quaterniond(Rs_[i]), Vs_[i], Bas_[i], Bgs_[i + 1],
-//          Ps_[i + 1], Eigen::Quaterniond(Rs_[i + 1]), Vs_[i + 1], Bas_[i + 1], Bgs_[i + 1]));
-//      // DLOG(INFO) << "sqrt_info: " << endl << sqrt_info;
-//
-//      DLOG(INFO) << "imu res bef: " << res.transpose();
-//      // DLOG(INFO) << "weighted pre: " << (sqrt_info * res).transpose();
-//      // DLOG(INFO) << "weighted pre: " << (sqrt_info * res).squaredNorm();
-//    }
-    //endregion
+//     //region Check for imu res
+// //    for (int i = 0; i < estimator_config_.window_size; ++i) {
+// //
+// //      typedef Eigen::Matrix<double, 15, 15> M15;
+// //      typedef Eigen::Matrix<double, 15, 1> V15;
+// //      M15 sqrt_info =
+// //          Eigen::LLT<M15>(pre_integrations_[i + 1]->covariance_.inverse()).matrixL().transpose();
+// //
+// //      V15 res = (pre_integrations_[i + 1]->Evaluate(
+// //          Ps_[i], Eigen::Quaterniond(Rs_[i]), Vs_[i], Bas_[i], Bgs_[i + 1],
+// //          Ps_[i + 1], Eigen::Quaterniond(Rs_[i + 1]), Vs_[i + 1], Bas_[i + 1], Bgs_[i + 1]));
+// //      // DLOG(INFO) << "sqrt_info: " << endl << sqrt_info;
+// //
+// //      DLOG(INFO) << "imu res bef: " << res.transpose();
+// //      // DLOG(INFO) << "weighted pre: " << (sqrt_info * res).transpose();
+// //      // DLOG(INFO) << "weighted pre: " << (sqrt_info * res).squaredNorm();
+// //    }
+//     //endregion
 
-    vis_bef_opt.UpdateMarkers(imu_poses, lidar_poses);
-    vis_bef_opt.PublishMarkers();
+//     vis_bef_opt.UpdateMarkers(imu_poses, lidar_poses);
+//     vis_bef_opt.PublishMarkers();
 
-    DLOG(INFO) << "====================================";
-  }
+//     DLOG(INFO) << "====================================";
+//   }
 
   vector<FeaturePerFrame> feature_frames;
 
@@ -1823,13 +1825,12 @@ void Estimator::SolveOptimization() {
   //依次把当前窗口内需要优化的变量从左到右b0_bk_(p,v,q); ba,bg赋值给para_pose_, para_speed_bias_, 外参赋值给para_ex_pose_
   //即para_pose_[0]和para_speed_bias_[0]对应pre_integrations_[window_size - opt_window_size] 
 
-
   vector<ceres::internal::ResidualBlock *> res_ids_marg;
   ceres::internal::ResidualBlock *res_id_marg = nullptr; //default: NULL
 
   //region Marginalization residual
   if (estimator_config_.marginalization_factor) {//true
-    if (last_marginalization_info) {//TODO在后面赋值为true, 此时应该为false
+    if (last_marginalization_info) {//在后面赋值为true, 初始化成功那次调用SolveOptimization()时为false, 其余为true 
       // construct new marginlization_factor
       MarginalizationFactor *marginalization_factor = new MarginalizationFactor(last_marginalization_info);
       res_id_marg = problem.AddResidualBlock(marginalization_factor, NULL,
@@ -1878,7 +1879,7 @@ void Estimator::SolveOptimization() {
     }
   }
 
-
+  //laser残差：滑窗内需要优化的位姿所对应的laser帧之间点到平面的距离
   vector<ceres::internal::ResidualBlock *> res_ids_proj;
   if (estimator_config_.point_distance_factor) {//true
     for (int i = 0; i < estimator_config_.opt_window_size + 1; ++i) {
@@ -1924,7 +1925,6 @@ void Estimator::SolveOptimization() {
 //                                     NULL,
                                        para_pose_[0], //pivot帧的位姿: b0_bpivot_(p, q)。
                                        //pivot帧为窗口内帧号=window_size - opt_window_size帧，也是第一个需要优化的位姿
-
                                        para_pose_[i], //b0_bk_(p, q)
                                        para_ex_pose_); //外参lb
 
@@ -1942,6 +1942,8 @@ void Estimator::SolveOptimization() {
     }
   }
 
+// 外参残差项
+// 就是待估计的l2b变量(Rlb,tlb)和初始化阶段通过loam后端和imu预积分的测量值得到的(Rlb,tlb)测量值，作"差"得到残差，然后求残差对(Rlb, tlb)的雅克比。
   if (estimator_config_.prior_factor) {//0
     {
       Twist<double> trans_tmp = transform_lb_.cast<double>();
@@ -1982,22 +1984,24 @@ void Estimator::SolveOptimization() {
     if (estimator_config_.imu_factor) {
       e_option.parameter_blocks = para_ids;
       e_option.residual_blocks = res_ids_pim;
-      problem.Evaluate(e_option, &cost_pim, NULL, NULL, NULL);
+      problem.Evaluate(e_option, &cost_pim, NULL, NULL, NULL); 
       DLOG(INFO) << "bef_pim: " << cost_pim;
 
     //  if (cost > 1e3 || !convergence_flag_) {
       if (cost_pim > 1e3) {
         turn_off = true;
-      } else {
+      } else { //开始优化前imu的cost
         turn_off = false;
       }
     }
+
     if (estimator_config_.point_distance_factor) {
       e_option.parameter_blocks = para_ids;
       e_option.residual_blocks = res_ids_proj;
       problem.Evaluate(e_option, &cost_ppp, NULL, NULL, NULL);
       DLOG(INFO) << "bef_proj: " << cost_ppp;
     }
+
     if (estimator_config_.marginalization_factor) {
       if (last_marginalization_info) {
         e_option.parameter_blocks = para_ids;
@@ -2077,7 +2081,7 @@ void Estimator::SolveOptimization() {
 
   // FIXME: Is marginalization needed in this framework? Yes, needed for extrinsic parameters.
 
-  DoubleToVector();
+  DoubleToVector(); //更新窗口内所有的位姿，把优化后的变量赋值给Ps_, Rs_, Vs_, Bas_, bgs
 
 //  P_last = Ps_.last();
 //  if ((P_last - P_last0).norm() < 0.1) {
@@ -2091,7 +2095,7 @@ void Estimator::SolveOptimization() {
 //  }
 
   //region Constraint Marginalization
-  if (estimator_config_.marginalization_factor && !turn_off) {
+  if (estimator_config_.marginalization_factor && !turn_off) {//上面在优化的时候没有关闭imu
 
     TicToc t_whole_marginalization;
 
@@ -2204,8 +2208,9 @@ void Estimator::SolveOptimization() {
 //    }
 
     VectorToDouble();
-
-    if (last_marginalization_info) {
+    
+    //将上一次先验残差项传递给marginalization_info
+    if (last_marginalization_info) { //在后面赋值为true, 初始化成功那次调用SolveOptimization()时为false, 其余为true
       vector<int> drop_set;
       for (int i = 0; i < static_cast<int>(last_marginalization_parameter_blocks.size()); i++) {
         if (last_marginalization_parameter_blocks[i] == para_pose_[0] ||
@@ -2221,25 +2226,27 @@ void Estimator::SolveOptimization() {
       marginalization_info->AddResidualBlockInfo(residual_block_info);
     }
 
+     //添加跟pivot(要marg的帧)相关的imu残差项
     if (estimator_config_.imu_factor) {//true
       int pivot_idx = estimator_config_.window_size - estimator_config_.opt_window_size;
       if (pre_integrations_[pivot_idx + 1]->sum_dt_ < 10.0) {
-        ImuFactor *imu_factor = new ImuFactor(pre_integrations_[pivot_idx + 1]);
+        ImuFactor *imu_factor = new ImuFactor(pre_integrations_[pivot_idx + 1]); //第一个优化位姿和第二个优化位姿之间的预积分
         ResidualBlockInfo *residual_block_info = new ResidualBlockInfo(imu_factor, NULL,
-                                                                       vector<double *>{para_pose_[0],
-                                                                                        para_speed_bias_[0],
-                                                                                        para_pose_[1],
-                                                                                        para_speed_bias_[1]},
+                                                                       vector<double *>{para_pose_[0], //第一个优化位姿
+                                                                                        para_speed_bias_[0], 
+                                                                                        para_pose_[1], //第二个优化位姿
+                                                                                        para_speed_bias_[1]}, 
                                                                        vector<int>{0, 1});
         marginalization_info->AddResidualBlockInfo(residual_block_info);
       }
     }
-
+    
+    //添加跟pivot(要marg的帧)相关的laser残差项
     if (estimator_config_.point_distance_factor) {//true
       for (int i = 1; i < estimator_config_.opt_window_size + 1; ++i) {
         int opt_i = int(estimator_config_.window_size - estimator_config_.opt_window_size + i);
 
-        FeaturePerFrame &feature_per_frame = feature_frames[opt_i];
+        FeaturePerFrame &feature_per_frame = feature_frames[opt_i]; //从窗口内第二个优化位姿开始
         LOG_ASSERT(opt_i == feature_per_frame.id);
 
         vector<unique_ptr<Feature>> &features = feature_per_frame.features;
@@ -2260,9 +2267,9 @@ void Estimator::SolveOptimization() {
                                                                                       coeff_eigen);
 
           ResidualBlockInfo *residual_block_info = new ResidualBlockInfo(pivot_point_plane_factor, loss_function,
-                                                                         vector<double *>{para_pose_[0],
-                                                                                          para_pose_[i],
-                                                                                          para_ex_pose_},
+                                                                         vector<double *>{para_pose_[0], //窗口内的第一个优化位姿(pivot帧)
+                                                                                          para_pose_[i], //从窗口内第二个优化位姿开始
+                                                                                          para_ex_pose_},//l2b外参
                                                                          vector<int>{0});
           marginalization_info->AddResidualBlockInfo(residual_block_info);
 
@@ -2273,16 +2280,16 @@ void Estimator::SolveOptimization() {
 
     TicToc t_pre_margin;
     marginalization_info->PreMarginalize();
-    ROS_DEBUG("pre marginalization %f ms", t_pre_margin.Toc());
-    ROS_DEBUG_STREAM("pre marginalization: " << t_pre_margin.Toc() << " ms");
+    // ROS_DEBUG("pre marginalization %f ms", t_pre_margin.Toc());
+    // ROS_DEBUG_STREAM("pre marginalization: " << t_pre_margin.Toc() << " ms");
 
     TicToc t_margin;
     marginalization_info->Marginalize();
-    ROS_DEBUG("marginalization %f ms", t_margin.Toc());
+    // ROS_DEBUG("marginalization %f ms", t_margin.Toc());
     ROS_DEBUG_STREAM("marginalization: " << t_margin.Toc() << " ms");
 
-    std::unordered_map<long, double *> addr_shift;
-    for (int i = 1; i < estimator_config_.opt_window_size + 1; ++i) {
+    std::unordered_map<long, double *> addr_shift; //pair中地址存放的是：para_pose_1 2 3 4 5参数的地址，para_pose_0是被marg的帧
+    for (int i = 1; i < estimator_config_.opt_window_size + 1; ++i) {//i = 1, ... 5 
       addr_shift[reinterpret_cast<long>(para_pose_[i])] = para_pose_[i - 1];
       addr_shift[reinterpret_cast<long>(para_speed_bias_[i])] = para_speed_bias_[i - 1];
     }
@@ -2329,162 +2336,163 @@ void Estimator::SolveOptimization() {
   }
   //endregion
 
+
   // NOTE: update to laser transform
-  if (estimator_config_.update_laser_imu) { //用来debug,可忽略
-    DLOG(INFO) << "======= aft opt =======";
-    Twist<double> transform_lb = transform_lb_.cast<double>();
-    Transform &opt_l0_transform = opt_transforms_[0];
-    int opt_0 = int(estimator_config_.window_size - estimator_config_.opt_window_size + 0);
-    Quaterniond rot_l0(Rs_[opt_0] * transform_lb.rot.conjugate().normalized());
-    Eigen::Vector3d pos_l0 = Ps_[opt_0] - rot_l0 * transform_lb.pos;
-    opt_l0_transform = Twist<double>{rot_l0, pos_l0}.cast<float>(); // for updating the map
+//   if (estimator_config_.update_laser_imu) { //用来debug,可忽略
+//     DLOG(INFO) << "======= aft opt =======";
+//     Twist<double> transform_lb = transform_lb_.cast<double>();
+//     Transform &opt_l0_transform = opt_transforms_[0];
+//     int opt_0 = int(estimator_config_.window_size - estimator_config_.opt_window_size + 0);
+//     Quaterniond rot_l0(Rs_[opt_0] * transform_lb.rot.conjugate().normalized());
+//     Eigen::Vector3d pos_l0 = Ps_[opt_0] - rot_l0 * transform_lb.pos;
+//     opt_l0_transform = Twist<double>{rot_l0, pos_l0}.cast<float>(); // for updating the map
 
-    vector<Transform> imu_poses, lidar_poses;
+//     vector<Transform> imu_poses, lidar_poses;
 
-    for (int i = 0; i < estimator_config_.opt_window_size + 1; ++i) {
-      int opt_i = int(estimator_config_.window_size - estimator_config_.opt_window_size + i);
+//     for (int i = 0; i < estimator_config_.opt_window_size + 1; ++i) {
+//       int opt_i = int(estimator_config_.window_size - estimator_config_.opt_window_size + i);
 
-      Quaterniond rot_li(Rs_[opt_i] * transform_lb.rot.conjugate().normalized());
-      Eigen::Vector3d pos_li = Ps_[opt_i] - rot_li * transform_lb.pos;
-      Twist<double> transform_li = Twist<double>(rot_li, pos_li);
+//       Quaterniond rot_li(Rs_[opt_i] * transform_lb.rot.conjugate().normalized());
+//       Eigen::Vector3d pos_li = Ps_[opt_i] - rot_li * transform_lb.pos;
+//       Twist<double> transform_li = Twist<double>(rot_li, pos_li);
 
-      // DLOG(INFO) << "Ps_[" << opt_i << "]: " << Ps_[opt_i].transpose();
-      // DLOG(INFO) << "Vs_[" << opt_i << "]: " << Vs_[opt_i].transpose();
-      /*
-      DLOG(INFO) << "Vs_[" << opt_i << "]: " << Vs_[opt_i].transpose();
-      DLOG(INFO) << "Rs_[" << opt_i << "]: " << Eigen::Quaterniond(Rs_[opt_i]).coeffs().transpose();
-      DLOG(INFO) << "Bas_[" << opt_i << "]: " << Bas_[opt_i].transpose();
-      DLOG(INFO) << "Bgs_[" << opt_i << "]: " << Bgs_[opt_i].transpose();
-      */
-//      DLOG(INFO) << "velocity: " << Vs_.last().norm();
-//      DLOG(INFO) << "transform_lb_: " << transform_lb_;
-      // DLOG(INFO) << "gravity in world: " << g_vec_.transpose();
+//       // DLOG(INFO) << "Ps_[" << opt_i << "]: " << Ps_[opt_i].transpose();
+//       // DLOG(INFO) << "Vs_[" << opt_i << "]: " << Vs_[opt_i].transpose();
+//       /*
+//       DLOG(INFO) << "Vs_[" << opt_i << "]: " << Vs_[opt_i].transpose();
+//       DLOG(INFO) << "Rs_[" << opt_i << "]: " << Eigen::Quaterniond(Rs_[opt_i]).coeffs().transpose();
+//       DLOG(INFO) << "Bas_[" << opt_i << "]: " << Bas_[opt_i].transpose();
+//       DLOG(INFO) << "Bgs_[" << opt_i << "]: " << Bgs_[opt_i].transpose();
+//       */
+// //      DLOG(INFO) << "velocity: " << Vs_.last().norm();
+// //      DLOG(INFO) << "transform_lb_: " << transform_lb_;
+//       // DLOG(INFO) << "gravity in world: " << g_vec_.transpose();
 
-      Twist<double> transform_bi = Twist<double>(Eigen::Quaterniond(Rs_[opt_i]), Ps_[opt_i]);
-      imu_poses.push_back(transform_bi.cast<float>());
-      lidar_poses.push_back(transform_li.cast<float>());
+//       Twist<double> transform_bi = Twist<double>(Eigen::Quaterniond(Rs_[opt_i]), Ps_[opt_i]);
+//       imu_poses.push_back(transform_bi.cast<float>());
+//       lidar_poses.push_back(transform_li.cast<float>());
 
-    }
+//     }
 
-    DLOG(INFO) << "velocity: " << Vs_.last().norm();
-    DLOG(INFO) << "transform_lb_: " << transform_lb_;
+//     DLOG(INFO) << "velocity: " << Vs_.last().norm();
+//     DLOG(INFO) << "transform_lb_: " << transform_lb_;
 
-    ROS_DEBUG_STREAM("lb in world: " << (rot_l0.normalized() * transform_lb.pos).transpose());
+//     ROS_DEBUG_STREAM("lb in world: " << (rot_l0.normalized() * transform_lb.pos).transpose());
 
-    //region Check for imu res
-//    for (int i = 0; i < estimator_config_.window_size; ++i) {
-//
-//      typedef Eigen::Matrix<double, 15, 15> M15;
-//      typedef Eigen::Matrix<double, 15, 1> V15;
-//      M15 sqrt_info =
-//          Eigen::LLT<M15>(pre_integrations_[i + 1]->covariance_.inverse()).matrixL().transpose();
-//
-//      V15 res = (pre_integrations_[i + 1]->Evaluate(
-//          Ps_[i], Eigen::Quaterniond(Rs_[i]), Vs_[i], Bas_[i], Bgs_[i + 1],
-//          Ps_[i + 1], Eigen::Quaterniond(Rs_[i + 1]), Vs_[i + 1], Bas_[i + 1], Bgs_[i + 1]));
-//      // DLOG(INFO) << "sqrt_info: " << endl << sqrt_info;
-//
-//      DLOG(INFO) << "imu res aft: " << res.transpose();
-//      // DLOG(INFO) << "weighted pre: " << (sqrt_info * res).transpose();
-//      // DLOG(INFO) << "weighted pre: " << (sqrt_info * res).squaredNorm();
-//    }
-    //endregion
+//     //region Check for imu res
+// //    for (int i = 0; i < estimator_config_.window_size; ++i) {
+// //
+// //      typedef Eigen::Matrix<double, 15, 15> M15;
+// //      typedef Eigen::Matrix<double, 15, 1> V15;
+// //      M15 sqrt_info =
+// //          Eigen::LLT<M15>(pre_integrations_[i + 1]->covariance_.inverse()).matrixL().transpose();
+// //
+// //      V15 res = (pre_integrations_[i + 1]->Evaluate(
+// //          Ps_[i], Eigen::Quaterniond(Rs_[i]), Vs_[i], Bas_[i], Bgs_[i + 1],
+// //          Ps_[i + 1], Eigen::Quaterniond(Rs_[i + 1]), Vs_[i + 1], Bas_[i + 1], Bgs_[i + 1]));
+// //      // DLOG(INFO) << "sqrt_info: " << endl << sqrt_info;
+// //
+// //      DLOG(INFO) << "imu res aft: " << res.transpose();
+// //      // DLOG(INFO) << "weighted pre: " << (sqrt_info * res).transpose();
+// //      // DLOG(INFO) << "weighted pre: " << (sqrt_info * res).squaredNorm();
+// //    }
+//     //endregion
 
-    vis_aft_opt.UpdateMarkers(imu_poses, lidar_poses);
-    vis_aft_opt.UpdateVelocity(Vs_.last().norm());
-    vis_aft_opt.PublishMarkers();
+//     vis_aft_opt.UpdateMarkers(imu_poses, lidar_poses);
+//     vis_aft_opt.UpdateVelocity(Vs_.last().norm());
+//     vis_aft_opt.PublishMarkers();
 
-    {
-      geometry_msgs::PoseStamped ex_lb_msg;
-      ex_lb_msg.header = Headers_.last();
-      ex_lb_msg.pose.position.x = transform_lb.pos.x();
-      ex_lb_msg.pose.position.y = transform_lb.pos.y();
-      ex_lb_msg.pose.position.z = transform_lb.pos.z();
-      ex_lb_msg.pose.orientation.w = transform_lb.rot.w();
-      ex_lb_msg.pose.orientation.x = transform_lb.rot.x();
-      ex_lb_msg.pose.orientation.y = transform_lb.rot.y();
-      ex_lb_msg.pose.orientation.z = transform_lb.rot.z();
-      pub_extrinsic_.publish(ex_lb_msg);
+//     {
+//       geometry_msgs::PoseStamped ex_lb_msg;
+//       ex_lb_msg.header = Headers_.last();
+//       ex_lb_msg.pose.position.x = transform_lb.pos.x();
+//       ex_lb_msg.pose.position.y = transform_lb.pos.y();
+//       ex_lb_msg.pose.position.z = transform_lb.pos.z();
+//       ex_lb_msg.pose.orientation.w = transform_lb.rot.w();
+//       ex_lb_msg.pose.orientation.x = transform_lb.rot.x();
+//       ex_lb_msg.pose.orientation.y = transform_lb.rot.y();
+//       ex_lb_msg.pose.orientation.z = transform_lb.rot.z();
+//       pub_extrinsic_.publish(ex_lb_msg);
 
-      int pivot_idx = estimator_config_.window_size - estimator_config_.opt_window_size;
+//       int pivot_idx = estimator_config_.window_size - estimator_config_.opt_window_size;
 
-      Eigen::Vector3d Ps_pivot = Ps_[pivot_idx];
-      Eigen::Matrix3d Rs_pivot = Rs_[pivot_idx];
+//       Eigen::Vector3d Ps_pivot = Ps_[pivot_idx];
+//       Eigen::Matrix3d Rs_pivot = Rs_[pivot_idx];
 
-      Quaterniond rot_pivot(Rs_pivot * transform_lb.rot.inverse());
-      Eigen::Vector3d pos_pivot = Ps_pivot - rot_pivot * transform_lb.pos;
-      PublishCloudMsg(pub_local_surf_points_,
-                      *surf_stack_[pivot_idx + 1],
-                      Headers_[pivot_idx + 1].stamp,
-                      "/laser_local");
+//       Quaterniond rot_pivot(Rs_pivot * transform_lb.rot.inverse());
+//       Eigen::Vector3d pos_pivot = Ps_pivot - rot_pivot * transform_lb.pos;
+//       PublishCloudMsg(pub_local_surf_points_,
+//                       *surf_stack_[pivot_idx + 1],
+//                       Headers_[pivot_idx + 1].stamp,
+//                       "/laser_local");
 
-      PublishCloudMsg(pub_local_corner_points_,
-                      *corner_stack_[pivot_idx + 1],
-                      Headers_[pivot_idx + 1].stamp,
-                      "/laser_local");
+//       PublishCloudMsg(pub_local_corner_points_,
+//                       *corner_stack_[pivot_idx + 1],
+//                       Headers_[pivot_idx + 1].stamp,
+//                       "/laser_local");
 
-      PublishCloudMsg(pub_local_full_points_,
-                      *full_stack_[pivot_idx + 1],
-                      Headers_[pivot_idx + 1].stamp,
-                      "/laser_local");
+//       PublishCloudMsg(pub_local_full_points_,
+//                       *full_stack_[pivot_idx + 1],
+//                       Headers_[pivot_idx + 1].stamp,
+//                       "/laser_local");
 
-      PublishCloudMsg(pub_map_surf_points_,
-                      *local_surf_points_filtered_ptr_,
-                      Headers_.last().stamp,
-                      "/laser_local");
-
-// #ifdef USE_CORNER
-//       PublishCloudMsg(pub_map_corner_points_,
-//                       *local_corner_points_filtered_ptr_,
+//       PublishCloudMsg(pub_map_surf_points_,
+//                       *local_surf_points_filtered_ptr_,
 //                       Headers_.last().stamp,
 //                       "/laser_local");
-// #endif
 
-      laser_local_trans_.setOrigin(tf::Vector3{pos_pivot.x(), pos_pivot.y(), pos_pivot.z()});
-      laser_local_trans_.setRotation(tf::Quaternion{rot_pivot.x(), rot_pivot.y(), rot_pivot.z(), rot_pivot.w()});
-      laser_local_trans_.stamp_ = Headers_.last().stamp;
-      tf_broadcaster_est_.sendTransform(laser_local_trans_);
+// // #ifdef USE_CORNER
+// //       PublishCloudMsg(pub_map_corner_points_,
+// //                       *local_corner_points_filtered_ptr_,
+// //                       Headers_.last().stamp,
+// //                       "/laser_local");
+// // #endif
 
-      Eigen::Vector3d Ps_last = Ps_.last();
-      Eigen::Matrix3d Rs_last = Rs_.last();
+//       laser_local_trans_.setOrigin(tf::Vector3{pos_pivot.x(), pos_pivot.y(), pos_pivot.z()});
+//       laser_local_trans_.setRotation(tf::Quaternion{rot_pivot.x(), rot_pivot.y(), rot_pivot.z(), rot_pivot.w()});
+//       laser_local_trans_.stamp_ = Headers_.last().stamp;
+//       tf_broadcaster_est_.sendTransform(laser_local_trans_);
 
-      Quaterniond rot_last(Rs_last * transform_lb.rot.inverse());
-      Eigen::Vector3d pos_last = Ps_last - rot_last * transform_lb.pos;
+//       Eigen::Vector3d Ps_last = Ps_.last();
+//       Eigen::Matrix3d Rs_last = Rs_.last();
 
-      Quaterniond rot_predict = (rot_pivot.inverse() * rot_last).normalized();
-      Eigen::Vector3d pos_predict = rot_pivot.inverse() * (Ps_last - Ps_pivot);
+//       Quaterniond rot_last(Rs_last * transform_lb.rot.inverse());
+//       Eigen::Vector3d pos_last = Ps_last - rot_last * transform_lb.pos;
 
-      PublishCloudMsg(pub_predict_surf_points_, *(surf_stack_.last()), Headers_.last().stamp, "/laser_predict");
-      PublishCloudMsg(pub_predict_full_points_, *(full_stack_.last()), Headers_.last().stamp, "/laser_predict");
+//       Quaterniond rot_predict = (rot_pivot.inverse() * rot_last).normalized();
+//       Eigen::Vector3d pos_predict = rot_pivot.inverse() * (Ps_last - Ps_pivot);
 
-      {
-        // NOTE: full stack into end of the scan
-//        PointCloudPtr tmp_points_ptr = boost::make_shared<PointCloud>(PointCloud());
-//        *tmp_points_ptr = *(full_stack_.last());
-//        TransformToEnd(tmp_points_ptr, transform_es_, 10);
-//        PublishCloudMsg(pub_predict_corrected_full_points_,
-//                        *tmp_points_ptr,
-//                        Headers_.last().stamp,
-//                        "/laser_predict");
+//       PublishCloudMsg(pub_predict_surf_points_, *(surf_stack_.last()), Headers_.last().stamp, "/laser_predict");
+//       PublishCloudMsg(pub_predict_full_points_, *(full_stack_.last()), Headers_.last().stamp, "/laser_predict");
 
-        TransformToEnd(full_stack_.last(), transform_es_, 10, true);
-        PublishCloudMsg(pub_predict_corrected_full_points_,
-                        *(full_stack_.last()),
-                        Headers_.last().stamp,
-                        "/laser_predict");
-      }
+//       {
+//         // NOTE: full stack into end of the scan
+// //        PointCloudPtr tmp_points_ptr = boost::make_shared<PointCloud>(PointCloud());
+// //        *tmp_points_ptr = *(full_stack_.last());
+// //        TransformToEnd(tmp_points_ptr, transform_es_, 10);
+// //        PublishCloudMsg(pub_predict_corrected_full_points_,
+// //                        *tmp_points_ptr,
+// //                        Headers_.last().stamp,
+// //                        "/laser_predict");
 
-// #ifdef USE_CORNER
-//       PublishCloudMsg(pub_predict_corner_points_, *(corner_stack_.last()), Headers_.last().stamp, "/laser_predict");
-// #endif
-      laser_predict_trans_.setOrigin(tf::Vector3{pos_predict.x(), pos_predict.y(), pos_predict.z()});
-      laser_predict_trans_.setRotation(tf::Quaternion{rot_predict.x(), rot_predict.y(), rot_predict.z(),
-                                                      rot_predict.w()});
-      laser_predict_trans_.stamp_ = Headers_.last().stamp;
-      tf_broadcaster_est_.sendTransform(laser_predict_trans_);
-    }
+//         TransformToEnd(full_stack_.last(), transform_es_, 10, true);
+//         PublishCloudMsg(pub_predict_corrected_full_points_,
+//                         *(full_stack_.last()),
+//                         Headers_.last().stamp,
+//                         "/laser_predict");
+//       }
 
-  }
+// // #ifdef USE_CORNER
+// //       PublishCloudMsg(pub_predict_corner_points_, *(corner_stack_.last()), Headers_.last().stamp, "/laser_predict");
+// // #endif
+//       laser_predict_trans_.setOrigin(tf::Vector3{pos_predict.x(), pos_predict.y(), pos_predict.z()});
+//       laser_predict_trans_.setRotation(tf::Quaternion{rot_predict.x(), rot_predict.y(), rot_predict.z(),
+//                                                       rot_predict.w()});
+//       laser_predict_trans_.stamp_ = Headers_.last().stamp;
+//       tf_broadcaster_est_.sendTransform(laser_predict_trans_);
+//     }
+
+//   }
 
   DLOG(INFO) << "tic_toc_opt: " << tic_toc_opt.Toc() << " ms";
   ROS_DEBUG_STREAM("tic_toc_opt: " << tic_toc_opt.Toc() << " ms");
@@ -2537,19 +2545,19 @@ void Estimator::DoubleToVector() {
 
 //  Quaterniond origin_R0{Rs_[0]};
   int pivot_idx = int(estimator_config_.window_size - estimator_config_.opt_window_size);
-  Vector3d origin_P0 = Ps_[pivot_idx];
-  Vector3d origin_R0 = R2ypr(Rs_[pivot_idx]);
+  Vector3d origin_P0 = Ps_[pivot_idx]; //b0_bpivot_p，优化前的
+  Vector3d origin_R0 = R2ypr(Rs_[pivot_idx]); //b0_bpivot_r, 优化前的
 
   Vector3d origin_R00 = R2ypr(Quaterniond(para_pose_[0][6],
                                           para_pose_[0][3],
                                           para_pose_[0][4],
                                           para_pose_[0][5]).normalized().toRotationMatrix());
   // Z-axix R00 to R0, regard para_pose's R as rotate along the Z-axis first
-  double y_diff = origin_R0.x() - origin_R00.x();
+  double y_diff = origin_R0.x() - origin_R00.x(); //计算优化前后的yaw_diff
 
   //TODO
   Matrix3d rot_diff = ypr2R(Vector3d(y_diff, 0, 0));
-  if (abs(abs(origin_R0.y()) - 90) < 1.0 || abs(abs(origin_R00.y()) - 90) < 1.0) {
+  if (abs(abs(origin_R0.y()) - 90) < 1.0 || abs(abs(origin_R00.y()) - 90) < 1.0) { //origin_R0.y()返回第二个元素pitch角
     ROS_DEBUG("euler singular point!");
     rot_diff = Rs_[pivot_idx] * Quaterniond(para_pose_[0][6],
                                             para_pose_[0][3],
@@ -2559,6 +2567,7 @@ void Estimator::DoubleToVector() {
 
 //  DLOG(INFO) << "origin_P0" << origin_P0.transpose();
 
+  //用b0_bpivot优化前后的变化量来修正窗口中不进行优化的变量，即[0, pivot)变量
   {
     Eigen::Vector3d Ps_pivot = Ps_[pivot_idx];
     Eigen::Matrix3d Rs_pivot = Rs_[pivot_idx];
@@ -2571,10 +2580,11 @@ void Estimator::DoubleToVector() {
     Vector3d P_opt_pivot = origin_P0;
 
     Twist<double> trans_opt_pivot{Eigen::Quaterniond{R_opt_pivot}, P_opt_pivot};
-    for (int idx = 0; idx < pivot_idx; ++idx) {
+
+    for (int idx = 0; idx < pivot_idx; ++idx) { //滑窗内第一个优化变量之前的变量
       Twist<double> trans_idx{Eigen::Quaterniond{Rs_[idx]}, Ps_[idx]};
       Twist<double> trans_opt_idx = trans_opt_pivot * trans_pivot.inverse() * trans_idx;
-      Ps_[idx] = trans_opt_idx.pos;
+      Ps_[idx] = trans_opt_idx.pos; //把优化后的位姿b0_bk_赋值给
       Rs_[idx] = trans_opt_idx.rot.normalized().toRotationMatrix();
 
       // wrong -- below
@@ -2609,7 +2619,8 @@ void Estimator::DoubleToVector() {
     Bgs_[opt_i] = Vector3d(para_speed_bias_[i][6],
                            para_speed_bias_[i][7],
                            para_speed_bias_[i][8]);
-  }
+  }//更新优化变量
+
   {
     transform_lb_.pos = Vector3d(para_ex_pose_[0],
                                  para_ex_pose_[1],
@@ -2621,25 +2632,24 @@ void Estimator::DoubleToVector() {
   }
 }
 
-//第一种调用：没有处理滑窗大小个laser帧；第二种调用：初始化失败
+//第一种调用(没有处理滑窗大小个laser帧)和第二种调用(初始化失败时)：
 //init_local_map_ ==false
-//其他是在调用SolveOptimization()函数之后调用
-
+//其他是在调用SolveOptimization()函数之后调用，init_local_map_ == true
 void Estimator::SlideWindow() { // NOTE: this function is only for the states and the local map
 
-  {
+  {//把marg帧(pivot帧)的points转换到后面紧挨着marg的帧下
     if (init_local_map_) {//只在 SolveOptimization() 中置为true。solve函数只在初始化成功后的那次laser帧处理时调用和后面已经处于初始化状态每次处理laser帧时都会调用
       int pivot_idx = estimator_config_.window_size - estimator_config_.opt_window_size;
 
       Twist<double> transform_lb = transform_lb_.cast<double>();
 
-      Eigen::Vector3d Ps_pivot = Ps_[pivot_idx];
-      Eigen::Matrix3d Rs_pivot = Rs_[pivot_idx];
+      Eigen::Vector3d Ps_pivot = Ps_[pivot_idx]; //b0_bpivot_p
+      Eigen::Matrix3d Rs_pivot = Rs_[pivot_idx]; //b0_bpivot_r
 
-      Quaterniond rot_pivot(Rs_pivot * transform_lb.rot.inverse());
-      Eigen::Vector3d pos_pivot = Ps_pivot - rot_pivot * transform_lb.pos;
+      Quaterniond rot_pivot(Rs_pivot * transform_lb.rot.inverse()); //b0_lpivot_r
+      Eigen::Vector3d pos_pivot = Ps_pivot - rot_pivot * transform_lb.pos; //b0_lpivot_p
 
-      Twist<double> transform_pivot = Twist<double>(rot_pivot, pos_pivot);
+      Twist<double> transform_pivot = Twist<double>(rot_pivot, pos_pivot); 
 
       PointCloudPtr transformed_cloud_surf_ptr(new PointCloud);
       PointCloudPtr transformed_cloud_corner_ptr(new PointCloud);
@@ -2650,14 +2660,14 @@ void Estimator::SlideWindow() { // NOTE: this function is only for the states an
       Eigen::Vector3d Ps_i = Ps_[i];
       Eigen::Matrix3d Rs_i = Rs_[i];
 
-      Quaterniond rot_li(Rs_i * transform_lb.rot.inverse());
-      Eigen::Vector3d pos_li = Ps_i - rot_li * transform_lb.pos;
+      Quaterniond rot_li(Rs_i * transform_lb.rot.inverse()); //bo_l(pivot+1)_r
+      Eigen::Vector3d pos_li = Ps_i - rot_li * transform_lb.pos; //bo_l(pivot+1)_p
 
       Twist<double> transform_li = Twist<double>(rot_li, pos_li);
-      Eigen::Affine3f transform_i_pivot = (transform_li.inverse() * transform_pivot).cast<float>().transform();
+      Eigen::Affine3f transform_i_pivot = (transform_li.inverse() * transform_pivot).cast<float>().transform(); //(pivot+1)到pivot的TF
       pcl::ExtractIndices<PointT> extract;
 
-      pcl::transformPointCloud(*(surf_stack_[pivot_idx]), *transformed_cloud_surf_ptr, transform_i_pivot);
+      pcl::transformPointCloud(*(surf_stack_[pivot_idx]), *transformed_cloud_surf_ptr, transform_i_pivot); //把pivot(marg帧)下的points装换到pivot+1帧下
       pcl::PointIndices::Ptr inliers_surf(new pcl::PointIndices());
 
       for (int i = 0; i < size_surf_stack_[0]; ++i) {
@@ -2670,7 +2680,7 @@ void Estimator::SlideWindow() { // NOTE: this function is only for the states an
 
       filtered_surf_points += *(surf_stack_[i]);
 
-      *(surf_stack_[i]) = filtered_surf_points;
+      *(surf_stack_[i]) = filtered_surf_points; //在pivot+1帧下(原本在pivot+1帧下的points +　marg帧的points)
 
 // #ifdef USE_CORNER
 //       pcl::transformPointCloud(*(corner_stack_[pivot_idx]), *transformed_cloud_corner_ptr, transform_i_pivot);
@@ -2706,8 +2716,8 @@ void Estimator::SlideWindow() { // NOTE: this function is only for the states an
   angular_velocity_buf_.push(vector<Vector3d>());
 
 //  Headers_.push(Headers_[cir_buf_count_]);
-  Ps_.push(Ps_[cir_buf_count_]);
-  Vs_.push(Vs_[cir_buf_count_]);
+  Ps_.push(Ps_[cir_buf_count_]); //如果在调用SolveOptimization()函数之后调用本函数时，cir_buf_count_一直不变，恒等于window size。 cir_buf_count_ == estimator_config_.window_size
+  Vs_.push(Vs_[cir_buf_count_]); 
   Rs_.push(Rs_[cir_buf_count_]);
   Bas_.push(Bas_[cir_buf_count_]);
   Bgs_.push(Bgs_[cir_buf_count_]);

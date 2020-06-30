@@ -49,6 +49,7 @@ namespace lio {
 
 const int NUM_THREADS = 4;
 
+//每一个残差项(一个imu预积分残差；或者一个点到平面的距离都是一个ResidualBlockInfo)
 struct ResidualBlockInfo {
   ResidualBlockInfo(ceres::CostFunction *_cost_function,
                     ceres::LossFunction *_loss_function,
@@ -57,7 +58,7 @@ struct ResidualBlockInfo {
       : cost_function(_cost_function),
         loss_function(_loss_function),
         parameter_blocks(_parameter_blocks),
-        drop_set(_drop_set) {}
+        drop_set(_drop_set) {} //imu: vector<int>{0, 1}; laser: vector<int>{0}, 见Estimator.cc::2228行
 
   void Evaluate();
 
@@ -66,8 +67,8 @@ struct ResidualBlockInfo {
   std::vector<double *> parameter_blocks;
   std::vector<int> drop_set;
 
-  double **raw_jacobians;
-  std::vector<Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>> jacobians;
+  double **raw_jacobians; //同下面的jacobians
+  std::vector<Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>> jacobians; //大小：该残差块有多少个参数块；每个存放的是：残差对每个参数块的雅克比
   Eigen::VectorXd residuals;
 
   int localSize(int size) {
@@ -75,13 +76,19 @@ struct ResidualBlockInfo {
   }
 };
 
+
+
+
 struct ThreadsStruct {
-  std::vector<ResidualBlockInfo *> sub_factors;
+  std::vector<ResidualBlockInfo *> sub_factors; //整体残差中的一部分残差
   Eigen::MatrixXd A;
   Eigen::VectorXd b;
   std::unordered_map<long, int> parameter_block_size; //global size
   std::unordered_map<long, int> parameter_block_idx; //local size
 };
+
+
+
 
 class MarginalizationInfo {
  public:
@@ -93,12 +100,12 @@ class MarginalizationInfo {
   void Marginalize();
   std::vector<double *> GetParameterBlocks(std::unordered_map<long, double *> &addr_shift);
 
-  std::vector<ResidualBlockInfo *> factors;
+  std::vector<ResidualBlockInfo *> factors; //存放所有残差项
   int m, n;
-  std::unordered_map<long, int> parameter_block_size; //global size
+  std::unordered_map<long, int> parameter_block_size; //global size   //pair内容：<每个参数块的地址，参数块的大小>
   int sum_block_size;
-  std::unordered_map<long, int> parameter_block_idx; //local size
-  std::unordered_map<long, double *> parameter_block_data;
+  std::unordered_map<long, int> parameter_block_idx; //local size    //pair内容：<每个参数块的地址，参数块的index>
+  std::unordered_map<long, double *> parameter_block_data; //pair内容：<每个参数块的地址，以及指向参数的double*>
 
   std::vector<int> keep_block_size; //global size
   std::vector<int> keep_block_idx;  //local size
@@ -108,6 +115,9 @@ class MarginalizationInfo {
   Eigen::VectorXd linearized_residuals;
   const double eps = 1e-8;
 };
+
+
+
 
 class MarginalizationFactor : public ceres::CostFunction {
  public:

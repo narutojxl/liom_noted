@@ -86,7 +86,8 @@ bool PivotPointPlaneFactor::Evaluate(double const *const *parameters, double *re
       jaco_pivot.leftCols<3>() = -w.transpose() * rlb * Rp.transpose(); //对tp
       jaco_pivot.rightCols<3>() =
           w.transpose() * rlb * (SkewSymmetric(Rp.transpose() * Ri * rlb.transpose() * (point_ - tlb))
-              + SkewSymmetric(Rp.transpose() * (Pi - P_pivot))); //TODO对Rp,待验证
+              + SkewSymmetric(Rp.transpose() * (Pi - P_pivot))); //TODO对Rp,待验证. 注意残差跟我们认为的残差形式不同
+          //我求的是w.transpose() * rlb * (SkewSymmetric(Rp.transpose() * Ri * rlb.transpose()* point_)
 
       jacobian_pose_pivot.setZero();
       jacobian_pose_pivot.leftCols<6>() = sqrt_info * jaco_pivot;
@@ -101,6 +102,7 @@ bool PivotPointPlaneFactor::Evaluate(double const *const *parameters, double *re
       jaco_i.rightCols<3>() =
           w.transpose() * rlb * Rp.transpose() * Ri * (-SkewSymmetric(rlb.transpose() * point_)
               + SkewSymmetric(rlb.transpose() * tlb)); //TODO对R,待验证
+          //我求的是w.transpose() * rlb * Rp.transpose() * Ri * (-SkewSymmetric(rlb.transpose() * point_)
 
       jacobian_pose_i.setZero();
       jacobian_pose_i.leftCols<6>() = sqrt_info * jaco_i;
@@ -122,13 +124,14 @@ bool PivotPointPlaneFactor::Evaluate(double const *const *parameters, double *re
       Eigen::Matrix<double, 1, 6> jaco_ex;
       //  NOTE: planar extrinsic
 //       jaco_ex.leftCols<3>() = w.transpose() * (I3x3 - rlb * Rp.transpose() * Ri * rlb.transpose()) * right_info_mat;
-      jaco_ex.leftCols<3>() = w.transpose() * (I3x3 - rlb * Rp.transpose() * Ri * rlb.transpose()); 
-      //TODO:我求出来的是 w.transpose() * (I3x3 + rlb * Rp.transpose() * Ri) 
+      jaco_ex.leftCols<3>() = w.transpose() * (I3x3 - rlb * Rp.transpose() * Ri * rlb.transpose()); //对delta_t
 
       jaco_ex.rightCols<3>() =
           w.transpose() * rlb * (-SkewSymmetric(Rp.transpose() * Ri * rlb.transpose() * (point_ - tlb))
               + Rp.transpose() * Ri * SkewSymmetric(rlb.transpose() * (point_ - tlb))
-              - SkewSymmetric(Rp.transpose() * (Pi - P_pivot))); //TODO:待验证
+              - SkewSymmetric(Rp.transpose() * (Pi - P_pivot))); //TODO:对delta_R,待验证
+          //令Exp(t) = Rp^T * Ri
+          //我求的是 w.transpose() * rlb * Rp^T * Ri *(Rbl * point)^ * (t)^
 
       jacobian_pose_ex.setZero();
       jacobian_pose_ex.leftCols<6>() = sqrt_info * jaco_ex;
@@ -139,6 +142,7 @@ bool PivotPointPlaneFactor::Evaluate(double const *const *parameters, double *re
   return true;
 }
 
+//检验计算的jacobian是否正确
 void PivotPointPlaneFactor::Check(double **parameters) {
 
   double *res = new double[1];

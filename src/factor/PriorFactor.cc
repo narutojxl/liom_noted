@@ -38,12 +38,12 @@ bool PriorFactor::Evaluate(double const *const *parameters, double *residuals, d
 
   Matrix<double, 6, 6> sqrt_info;
   sqrt_info.setZero();
-  sqrt_info.topLeftCorner<3, 3>() = Matrix3d::Identity() * 1000;
-  sqrt_info.bottomRightCorner<3, 3>() = Matrix3d::Identity() * 0.1;
+  sqrt_info.topLeftCorner<3, 3>() = Matrix3d::Identity() * 1000;//平移分量的方差很大，因为imu初始化时刻我们没有估计平移量。初值用的是配置文件给的。
+  sqrt_info.bottomRightCorner<3, 3>() = Matrix3d::Identity() * 0.1; //初值用的是初始化时刻估计的
 
   Eigen::Map<Eigen::Matrix<double, 6, 1>> residual(residuals);
   residual.topRows<3>() = P - pos_;
-  residual.bottomRows<3>() = 2 * (rot_.inverse() * Q).coeffs().head<3>();
+  residual.bottomRows<3>() = 2 * (rot_.inverse() * Q).coeffs().head<3>(); //Log({Rm}^-1 * R)
 
   // FIXME: info
   residual = sqrt_info * residual;
@@ -55,7 +55,8 @@ bool PriorFactor::Evaluate(double const *const *parameters, double *residuals, d
       Eigen::Matrix<double, 6, 6> jaco_prior;
       jaco_prior.setIdentity();
 
-      jaco_prior.bottomRightCorner<3, 3>() = LeftQuatMatrix(Q.inverse() * rot_).topLeftCorner<3, 3>();
+      jaco_prior.bottomRightCorner<3, 3>() = LeftQuatMatrix(Q.inverse() * rot_).topLeftCorner<3, 3>(); //对R
+      //TODO按照右扰动为 I，作者这是怎么求的？
 
       // FIXME: info
       jacobian_prior.setZero();
@@ -66,6 +67,7 @@ bool PriorFactor::Evaluate(double const *const *parameters, double *residuals, d
   return true;
 }
 
+//检验计算的jacobian是否正确
 void PriorFactor::Check(double const *const *parameters) {
   Eigen::Vector3d P{parameters[0][0], parameters[0][1], parameters[0][2]};
   Eigen::Quaterniond Q(parameters[0][6], parameters[0][3], parameters[0][4], parameters[0][5]);
