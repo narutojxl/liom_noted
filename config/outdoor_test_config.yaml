@@ -46,7 +46,7 @@ plane_projection_factor: 0 #没有使用
 imu_factor: 1 #是否使用imu.为0时其实和没有使用imu的loam一样，不涉及imu预积分，初始化，残差，紧耦合的东西
 point_distance_factor: 1 #laser factor
 
-prior_factor: 0 #是否把外参factor加进去
+prior_factor: 0 #是否把外参factor加进去一起优化
 
 marginalization_factor: 1
 

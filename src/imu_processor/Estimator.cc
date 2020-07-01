@@ -638,7 +638,9 @@ void Estimator::ProcessLaserOdom(const Transform &transform_in, const std_msgs::
       }// end NOT_INITED
       case INITED: {
         if (opt_point_coeff_map_.size() == estimator_config_.opt_window_size + 1) {//当状态为已经初始化的状态时，该if条件满足
-          if (estimator_config_.enable_deskew || estimator_config_.cutoff_deskew) {//对当前帧surf和sharp points去畸变, 压入到surf_stack_，corner_stack_中 
+
+          //对当前帧surf和sharp points去畸变, 压入到surf_stack_，corner_stack_中 
+          if (estimator_config_.enable_deskew || estimator_config_.cutoff_deskew) {
             TicToc t_deskew;
             t_deskew.Tic();
             // TODO: the coefficients to be parameterized
@@ -712,7 +714,7 @@ void Estimator::ProcessLaserOdom(const Transform &transform_in, const std_msgs::
           DLOG(INFO) << ">>>>>>> solving optimization <<<<<<<";
           SolveOptimization();
           
-          //https://github.com/hyye/lio-mapping/issues/38，作者在maplab分支中把该函数屏蔽掉了
+          //作者在maplab分支中把该函数屏蔽掉了, https://github.com/hyye/lio-mapping/issues/38
           //在https://github.com/hyye/lio-mapping/blob/maplab/src/imu_processor/Estimator.cc
           if (!opt_point_coeff_mask_.first()) {//TODO 在已经初始化阶段，最老时间戳为true，应该不会执行, 但是实际中却执行了，why？
             // UpdateMapDatabase(opt_corner_stack_.first(), //这段函数是干什么用？ 
@@ -731,7 +733,7 @@ void Estimator::ProcessLaserOdom(const Transform &transform_in, const std_msgs::
                      << " != estimator_config_.opt_window_size + 1: " << estimator_config_.opt_window_size + 1;
         }
 
-        PublishResults();
+        // PublishResults(); //PointMapping类函数。已经为初始化状态了，PointMapping::Process()函数已经不再调用了，应该屏蔽掉
 
         SlideWindow();
 
@@ -740,10 +742,10 @@ void Estimator::ProcessLaserOdom(const Transform &transform_in, const std_msgs::
           local_odom_.header.stamp = Headers_[pivot_idx + 1].stamp;
           local_odom_.header.seq += 1;
           Twist<double> transform_lb = transform_lb_.cast<double>();
-          Eigen::Vector3d Ps_pivot = Ps_[pivot_idx];
-          Eigen::Matrix3d Rs_pivot = Rs_[pivot_idx];
-          Quaterniond rot_pivot(Rs_pivot * transform_lb.rot.inverse());
-          Eigen::Vector3d pos_pivot = Ps_pivot - rot_pivot * transform_lb.pos;
+          Eigen::Vector3d Ps_pivot = Ps_[pivot_idx]; //b0_bpivot_p
+          Eigen::Matrix3d Rs_pivot = Rs_[pivot_idx]; //b0_bpivot_q
+          Quaterniond rot_pivot(Rs_pivot * transform_lb.rot.inverse()); //b0_lpivot_q
+          Eigen::Vector3d pos_pivot = Ps_pivot - rot_pivot * transform_lb.pos; //b0_lpivot_p
           Twist<double> transform_pivot = Twist<double>(rot_pivot, pos_pivot);
           local_odom_.pose.pose.orientation.x = transform_pivot.rot.x();
           local_odom_.pose.pose.orientation.y = transform_pivot.rot.y();
@@ -751,7 +753,7 @@ void Estimator::ProcessLaserOdom(const Transform &transform_in, const std_msgs::
           local_odom_.pose.pose.orientation.w = transform_pivot.rot.w();
           local_odom_.pose.pose.position.x = transform_pivot.pos.x();
           local_odom_.pose.pose.position.y = transform_pivot.pos.y();
-          local_odom_.pose.pose.position.z = transform_pivot.pos.z();
+          local_odom_.pose.pose.position.z = transform_pivot.pos.z(); //marg帧lpivot在b0下的位姿
           pub_local_odom_.publish(local_odom_);
 
           laser_odom_.header.stamp = header.stamp;
@@ -768,7 +770,7 @@ void Estimator::ProcessLaserOdom(const Transform &transform_in, const std_msgs::
           laser_odom_.pose.pose.position.x = transform_last.pos.x();
           laser_odom_.pose.pose.position.y = transform_last.pos.y();
           laser_odom_.pose.pose.position.z = transform_last.pos.z();
-          pub_laser_odom_.publish(laser_odom_);
+          pub_laser_odom_.publish(laser_odom_); //最新帧在b0下的位姿
         }
 
         break;
@@ -780,7 +782,9 @@ void Estimator::ProcessLaserOdom(const Transform &transform_in, const std_msgs::
     }
   }
 
-  wi_trans_.setRotation(tf::Quaternion{Q_WI_.x(), Q_WI_.y(), Q_WI_.z(), Q_WI_.w()}); //在未初始化阶段且还未处理滑窗大小个laser时和初始化失败时, Q_WI_ = I
+  //在未初始化阶段且还未处理滑窗大小个laser时和初始化失败时, Q_WI_ = I
+  //已经为initialized, Q_WI_ = l0_2_b0
+  wi_trans_.setRotation(tf::Quaternion{Q_WI_.x(), Q_WI_.y(), Q_WI_.z(), Q_WI_.w()}); 
   wi_trans_.stamp_ = header.stamp;
   tf_broadcaster_est_.sendTransform(wi_trans_);
 
@@ -1805,8 +1809,7 @@ void Estimator::SolveOptimization() {
   vector<double *> para_ids; //size: estimator_config_.opt_window_size + 1
 
   //region Add pose and speed bias parameters
-  for (int i = 0; i < estimator_config_.opt_window_size + 1;
-       ++i) {
+  for (int i = 0; i < estimator_config_.opt_window_size + 1; ++i) {
     ceres::LocalParameterization *local_parameterization = new PoseLocalParameterization(); //自己定义的类
     problem.AddParameterBlock(para_pose_[i], SIZE_POSE, local_parameterization);
     problem.AddParameterBlock(para_speed_bias_[i], SIZE_SPEED_BIAS);
@@ -1843,7 +1846,7 @@ void Estimator::SolveOptimization() {
 
   //region Marginalization residual
   if (estimator_config_.marginalization_factor) {//true
-    if (last_marginalization_info) {//初始化成功那次调用SolveOptimization()时为false(在后面会赋值为true), 其余调用solve时为true。
+    if (last_marginalization_info) {//初始化成功那次调用SolveOptimization()时为false(在后面会赋值为true); 其余调用solve函数时为true。
       // construct new marginlization_factor
       MarginalizationFactor *marginalization_factor = new MarginalizationFactor(last_marginalization_info);
       res_id_marg = problem.AddResidualBlock(marginalization_factor, NULL,
@@ -1857,8 +1860,7 @@ void Estimator::SolveOptimization() {
   //imu预积分残差：窗口内需要优化的变量每相邻两个之间的imu预积分残差，见liom补充材料 “C IMU Residual”
   vector<ceres::internal::ResidualBlock *> res_ids_pim; 
   if (estimator_config_.imu_factor) {//true
-    for (int i = 0; i < estimator_config_.opt_window_size;
-         ++i) {
+    for (int i = 0; i < estimator_config_.opt_window_size; ++i) {
       int j = i + 1;
       int opt_i = int(estimator_config_.window_size - estimator_config_.opt_window_size + i);
       int opt_j = opt_i + 1;
@@ -2281,7 +2283,7 @@ void Estimator::SolveOptimization() {
                                                                                       coeff_eigen);
 
           ResidualBlockInfo *residual_block_info = new ResidualBlockInfo(pivot_point_plane_factor, loss_function,
-                                                                         vector<double *>{para_pose_[0], //窗口内的第一个优化位姿(pivot帧)
+                                                                         vector<double *>{para_pose_[0], //窗口内的第一个优化位姿(pivot帧)的PQ
                                                                                           para_pose_[i], //从窗口内第二个优化位姿开始
                                                                                           para_ex_pose_},//l2b外参
                                                                          vector<int>{0});
@@ -2304,13 +2306,14 @@ void Estimator::SolveOptimization() {
 
     std::unordered_map<long, double *> addr_shift; //pair中地址存放的是：para_pose_1 2 3 4 5参数的地址，para_pose_0是被marg的帧
     for (int i = 1; i < estimator_config_.opt_window_size + 1; ++i) {//i = 1, ... 5 
-      addr_shift[reinterpret_cast<long>(para_pose_[i])] = para_pose_[i - 1];
+      addr_shift[reinterpret_cast<long>(para_pose_[i])] = para_pose_[i - 1]; //TODO地址对应的变量暂时不对啊，后面在slideWindow中会赋新值？
       addr_shift[reinterpret_cast<long>(para_speed_bias_[i])] = para_speed_bias_[i - 1];
     }
 
     addr_shift[reinterpret_cast<long>(para_ex_pose_)] = para_ex_pose_;
 
     vector<double *> parameter_blocks = marginalization_info->GetParameterBlocks(addr_shift);
+    //parameter_blocks中存的是para_pose_0 1 2 3 4变量数据 ？
 
     if (last_marginalization_info) {
       delete last_marginalization_info;
@@ -2692,9 +2695,9 @@ void Estimator::SlideWindow() { // NOTE: this function is only for the states an
       extract.setNegative(true);
       extract.filter(filtered_surf_points);
 
-      filtered_surf_points += *(surf_stack_[i]);
+      filtered_surf_points += *(surf_stack_[i]); //i = pivot_idx + 1
 
-      *(surf_stack_[i]) = filtered_surf_points; //在pivot+1帧下(原本在pivot+1帧下的points +　marg帧的points)
+      *(surf_stack_[i]) = filtered_surf_points; //在pivot+1帧下points,包括(原本在pivot+1帧下的points +　marg帧的points)
 
 // #ifdef USE_CORNER
 //       pcl::transformPointCloud(*(corner_stack_[pivot_idx]), *transformed_cloud_corner_ptr, transform_i_pivot);
@@ -2730,7 +2733,8 @@ void Estimator::SlideWindow() { // NOTE: this function is only for the states an
   angular_velocity_buf_.push(vector<Vector3d>());
 
 //  Headers_.push(Headers_[cir_buf_count_]);
-  Ps_.push(Ps_[cir_buf_count_]); //如果在调用SolveOptimization()函数之后调用本函数时，cir_buf_count_一直不变，恒等于window size。 cir_buf_count_ == estimator_config_.window_size
+//如果在调用SolveOptimization()函数之后调用的本函数，cir_buf_count_一直不变，恒等于window size。 cir_buf_count_ == estimator_config_.window_size
+  Ps_.push(Ps_[cir_buf_count_]); //TODO什么意思？
   Vs_.push(Vs_[cir_buf_count_]); 
   Rs_.push(Rs_[cir_buf_count_]);
   Bas_.push(Bas_[cir_buf_count_]);

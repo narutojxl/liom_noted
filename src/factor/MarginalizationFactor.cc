@@ -111,29 +111,38 @@ MarginalizationInfo::~MarginalizationInfo() {
   }
 }
 
+//给parameter_block_size， parameter_block_idx填充内容
+//第一次边缘化时，只添加跟marg帧相关的imu预积分残差和laser残差
+//后面边缘化时，还会添加上次边缘化后产生的残差
 void MarginalizationInfo::AddResidualBlockInfo(ResidualBlockInfo *residual_block_info) {
   factors.emplace_back(residual_block_info);
 
-  std::vector<double *> &parameter_blocks = residual_block_info->parameter_blocks; //这个残差有几个参数块
+  std::vector<double *> &parameter_blocks = residual_block_info->parameter_blocks; //这个残差的参数块
   std::vector<int> parameter_block_sizes = residual_block_info->cost_function->parameter_block_sizes();//每个参数块的大小
 
   for (int i = 0; i < static_cast<int>(residual_block_info->parameter_blocks.size()); i++) {
     double *addr = parameter_blocks[i]; //每个参数块的地址
     int size = parameter_block_sizes[i]; //对应参数块的大小
-    parameter_block_size[reinterpret_cast<long>(addr)] = size;
+    parameter_block_size[reinterpret_cast<long>(addr)] = size; 
   }
 
-  for (int i = 0; i < static_cast<int>(residual_block_info->drop_set.size()); i++) {
+  //imu预积分残差项的drop_set: vector<int>{0, 1}; 
+  //laser残差项的drop_set: vector<int>{0}
+  for (int i = 0; i < static_cast<int>(residual_block_info->drop_set.size()); i++) { 
     double *addr = parameter_blocks[residual_block_info->drop_set[i]];
-    parameter_block_idx[reinterpret_cast<long>(addr)] = 0; 
-    //imu ResidualBlockInfo的第一，二个参数块，即窗口内的第一个优化的位姿pivot
-    //每个laser ResidualBlockInfo的第一个参数块，即窗口内的第一个优化位姿(pivot帧)
+    parameter_block_idx[reinterpret_cast<long>(addr)] = 0;
+    //第一次边缘化时： parameter_block_idx大小为2
+    //imu ResidualBlockInfo的第一，二个参数块地址，即窗口内的第一个优化的位姿pivot(PQ, VBaBg)， 帧号为0
+    //每个laser ResidualBlockInfo的第一个参数块地址，即窗口内的第一个优化位姿(pivot帧)PQ, 帧号为0
   }
 }
 
+
+//给parameter_block_data填充内容
 void MarginalizationInfo::PreMarginalize() {
   for (auto it : factors) {
-    it->Evaluate(); //对于加入到本类中的每个残差，计算每个残差项，以及残差对优化变量的雅克比
+    it->Evaluate(); //本类中添加的是和marg帧相关的imu预积分残差项，marg帧和其他帧的laser残差项，还有上一次marg帧产生的先验残差项。
+    //计算每个残差项，以及残差对优化变量的雅克比
 
     std::vector<int> block_sizes = it->cost_function->parameter_block_sizes();
     for (int i = 0; i < static_cast<int>(block_sizes.size()); i++) {
@@ -189,21 +198,21 @@ void *ThreadsConstructA(void *threadsstruct) {
 
 void MarginalizationInfo::Marginalize() {
   int pos = 0;
-  for (auto &it : parameter_block_idx) {
+  for (auto &it : parameter_block_idx) {//第一次边缘化时：parameter_block_idx大小为2。marg帧的PQ, VBaBg
     it.second = pos;
-    pos += LocalSize(parameter_block_size[it.first]);
+    pos += LocalSize(parameter_block_size[it.first]); 
   }
 
-  m = pos;  //m: marg的状态个数
+  m = pos;  //m: marg状态的参数块总维数，6+9=15
 
   for (const auto &it : parameter_block_size) {
     if (parameter_block_idx.find(it.first) == parameter_block_idx.end()) {
-      parameter_block_idx[it.first] = pos;
+      parameter_block_idx[it.first] = pos; //parameter_block_idx中没有的参数块，把该参数块的地址和索引添加进来
       pos += LocalSize(it.second);
     }
   }
 
-  n = pos - m; //n: 剩下的状态个数
+  n = pos - m; //n: 剩下状态的参数块维数之和； pos：所有优化变量的维数之和
 
   //ROS_DEBUG("marginalization, pos: %d, m: %d, n: %d, size: %d", pos, m, n, (int)parameter_block_idx.size());
   /*
@@ -289,18 +298,20 @@ void MarginalizationInfo::Marginalize() {
       * saes.eigenvectors().transpose();
   //printf("error1: %f\n", (Amm * Amm_inv - Eigen::MatrixXd::Identity(m, m)).sum());
 
-  //jxl: 见FEJ First Estimate Jacobians paper: Consistency Analysis for Sliding-Window Visual Odometry
+  //jxl: 见FEJ(First Estimate Jacobians) paper: Consistency Analysis for Sliding-Window Visual Odometry
   Eigen::VectorXd bmm = b.segment(0, m);
   Eigen::MatrixXd Amr = A.block(0, m, m, n);
   Eigen::MatrixXd Arm = A.block(m, 0, n, m);
   Eigen::MatrixXd Arr = A.block(m, m, n, n);
   Eigen::VectorXd brr = b.segment(m, n);
-  A = Arr - Arm * Amm_inv * Amr;
+  A = Arr - Arm * Amm_inv * Amr; 
   b = brr - Arm * Amm_inv * bmm; 
-  //舒尔补, 消去X_m 
-  //得到A * X_(r+n) =  b
+  //舒尔补, 消去X_m，剩下X_(r+n) 
+  //得到 A * X_(r+n) =  b， 边缘化pivot帧后，得到的对剩余状态的约束方程
+  //其中 A = J^T * J, A是一个实对称矩阵。 J = Σ每个残差项ri对X_(r+n)的雅克比
+  //其中 b = J^T * r, r = Σ每个残差项。
 
-  Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> saes2(A);
+  Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> saes2(A); //实对称矩阵特征值分解 A = V [\] V^T, V.inv() =V.trans() 
   Eigen::VectorXd S = Eigen::VectorXd((saes2.eigenvalues().array() > eps).select(saes2.eigenvalues().array(), 0));
   Eigen::VectorXd
       S_inv = Eigen::VectorXd((saes2.eigenvalues().array() > eps).select(saes2.eigenvalues().array().inverse(), 0));
@@ -309,8 +320,8 @@ void MarginalizationInfo::Marginalize() {
   Eigen::VectorXd S_inv_sqrt = S_inv.cwiseSqrt();
 
   //jxl: FEJ,以后计算关于先验的误差和Jacobian都在边缘化的这个线性点展开
-  linearized_jacobians = S_sqrt.asDiagonal() * saes2.eigenvectors().transpose();
-  linearized_residuals = S_inv_sqrt.asDiagonal() * saes2.eigenvectors().transpose() * b;
+  linearized_jacobians = S_sqrt.asDiagonal() * saes2.eigenvectors().transpose(); //J = [sqrt(λ1)...sqrt(λi)...sqrt(λn)].diag() * V^T , J可逆
+  linearized_residuals = S_inv_sqrt.asDiagonal() * saes2.eigenvectors().transpose() * b; //r = (J^T).inv() * b
 
 //  std::cout << "A" << std::endl;
 //  std::cout << A << std::endl
@@ -324,12 +335,12 @@ void MarginalizationInfo::Marginalize() {
 
 std::vector<double *> MarginalizationInfo::GetParameterBlocks(std::unordered_map<long, double *> &addr_shift) {
   std::vector<double *> keep_block_addr;
-  keep_block_size.clear();
-  keep_block_idx.clear();
-  keep_block_data.clear();
+  keep_block_size.clear(); //保存X_(r+n)每个参数块的大小
+  keep_block_idx.clear(); //保存X_(r+n)每个参数块的索引，通过索引或地址可以找到该参数块
+  keep_block_data.clear();//保存X_(r+n)每个参数块的数据， 这三个变量一一对应
 
   for (const auto &it : parameter_block_idx) {
-    if (it.second >= m) {
+    if (it.second >= m) {//只对X_(r+n)的参数块
       keep_block_size.push_back(parameter_block_size[it.first]);
       keep_block_idx.push_back(parameter_block_idx[it.first]);
       keep_block_data.push_back(parameter_block_data[it.first]);
@@ -343,18 +354,20 @@ std::vector<double *> MarginalizationInfo::GetParameterBlocks(std::unordered_map
 
 
 
-//MarginalizationFactor涉及到的类
+
 MarginalizationFactor::MarginalizationFactor(MarginalizationInfo *_marginalization_info) : marginalization_info(
     _marginalization_info) {
   int cnt = 0;
-  for (auto it : marginalization_info->keep_block_size) {
-    mutable_parameter_block_sizes()->push_back(it);
+  for (auto it : marginalization_info->keep_block_size) { //上一次marg后剩下状态X_(r+n)的参数块
+    mutable_parameter_block_sizes()->push_back(it); //每个参数块的大小
     cnt += it;
   }
   //printf("residual size: %d, %d\n", cnt, n);
-  set_num_residuals(marginalization_info->n);
+  set_num_residuals(marginalization_info->n); //n: 上一次marg后剩下状态X_(r+n)的参数块维数之和
 };
 
+
+//TODO没看懂
 bool MarginalizationFactor::Evaluate(double const *const *parameters, double *residuals, double **jacobians) const {
   //printf("internal addr,%d, %d\n", (int)parameter_block_sizes().size(), num_residuals());
   //for (int i = 0; i < static_cast<int>(keep_block_size.size()); i++)
@@ -367,7 +380,7 @@ bool MarginalizationFactor::Evaluate(double const *const *parameters, double *re
   int n = marginalization_info->n;
   int m = marginalization_info->m;
   Eigen::VectorXd dx(n);
-  for (int i = 0; i < static_cast<int>(marginalization_info->keep_block_size.size()); i++) {
+  for (int i = 0; i < static_cast<int>(marginalization_info->keep_block_size.size()); i++) {//对于上一次marg后剩下状态X_(r+n)
     int size = marginalization_info->keep_block_size[i];
     int idx = marginalization_info->keep_block_idx[i] - m;
     Eigen::VectorXd x = Eigen::Map<const Eigen::VectorXd>(parameters[i], size);
@@ -385,6 +398,7 @@ bool MarginalizationFactor::Evaluate(double const *const *parameters, double *re
       }
     }
   }
+
   Eigen::Map<Eigen::VectorXd>(residuals, n) =
       marginalization_info->linearized_residuals + marginalization_info->linearized_jacobians * dx;
 

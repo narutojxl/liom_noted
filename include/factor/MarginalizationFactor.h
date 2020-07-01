@@ -58,7 +58,9 @@ struct ResidualBlockInfo {
       : cost_function(_cost_function),
         loss_function(_loss_function),
         parameter_blocks(_parameter_blocks),
-        drop_set(_drop_set) {} //imu: vector<int>{0, 1}; laser: vector<int>{0}, 见Estimator.cc::2228行
+        drop_set(_drop_set) {} 
+        //imu预积分残差项的drop_set: vector<int>{0, 1}; 
+        //laser残差项的drop_set: vector<int>{0}
 
   void Evaluate();
 
