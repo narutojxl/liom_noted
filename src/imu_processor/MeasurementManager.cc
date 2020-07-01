@@ -51,7 +51,7 @@ void MeasurementManager::SetupRos(ros::NodeHandle &nh) {
 //      nh_.subscribe<nav_msgs::Odometry>(mm_config_.laser_odom_topic, 10, &MeasurementManager::LaserOdomHandler, this);
 }
 
-//不断地把在回调函数中前端发布的"/compact_data" topic(laser和odom), 和imu measurements, 组织成一个pair vector返回
+//不断地把在回调函数中前端发布的"/compact_data" topic(laser points和odom TF), 和imu measurements, 组织成一个pair vector返回
 PairMeasurements MeasurementManager::GetMeasurements() {
 
   PairMeasurements measurements;
@@ -65,14 +65,14 @@ PairMeasurements MeasurementManager::GetMeasurements() {
       }
 
       if (imu_buf_.back()->header.stamp.toSec()
-          <= compact_data_buf_.front()->header.stamp.toSec() + mm_config_.msg_time_delay) {//0
+          <= compact_data_buf_.front()->header.stamp.toSec() + mm_config_.msg_time_delay) {//mm_config_.msg_time_delay==0
         //ROS_DEBUG("wait for imu, only should happen at the beginning");
         // Count for waiting time
         return measurements;
       }
 
       if (imu_buf_.front()->header.stamp.toSec()
-          >= compact_data_buf_.front()->header.stamp.toSec() + mm_config_.msg_time_delay) {//0
+          >= compact_data_buf_.front()->header.stamp.toSec() + mm_config_.msg_time_delay) {//mm_config_.msg_time_delay==0
         ROS_DEBUG("throw compact_data, only should happen at the beginning");
         compact_data_buf_.pop();
         continue;

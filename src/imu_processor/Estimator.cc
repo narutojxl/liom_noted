@@ -58,14 +58,17 @@ namespace lio {
 //  }
 //}
 
-// WARNING to half actually
+
+//cloud: 存放当前帧less flat points， 当前帧less sharp points
+//transform_es: lk+1_lk_TF，k+1为当前帧laser，k为上一帧laser
+//time_factor: 10
 size_t TransformToEnd(PointCloudPtr &cloud, Twist<float> transform_es, float time_factor, bool keep_intensity = false) {
   size_t cloud_size = cloud->points.size();
 
   for (size_t i = 0; i < cloud_size; i++) {
     PointT &point = cloud->points[i];
 
-    float s = time_factor * (point.intensity - int(point.intensity));
+    float s = time_factor * (point.intensity - int(point.intensity)); //从该帧的start点到该点的时间与本帧时间的比例
 
 //    DLOG(INFO) << "s: " << s;
     if (s < 0 || s > 1 + 1e-3) {
@@ -85,7 +88,7 @@ size_t TransformToEnd(PointCloudPtr &cloud, Twist<float> transform_es, float tim
     q_id.setIdentity();
     q_s = q_id.slerp(s, q_e);
 
-    RotatePoint(q_s.conjugate().normalized(), point);
+    RotatePoint(q_s.conjugate().normalized(), point); //先转换到本帧的start点下, ps = (sR)^T * ( p - st)
 
 //    q_half = q_id.slerp(0.5, q_e);
 //    RotatePoint(q_half, point);
@@ -96,11 +99,16 @@ size_t TransformToEnd(PointCloudPtr &cloud, Twist<float> transform_es, float tim
 
      point.x += transform_es.pos.x();
      point.y += transform_es.pos.y();
-     point.z += transform_es.pos.z();
+     point.z += transform_es.pos.z(); //再转换到本帧的end点下, pe = R * ps + t
   }
 
   return cloud_size;
 }
+
+
+
+
+
 
 Estimator::Estimator() {
   ROS_DEBUG(">>>>>>> Estimator started! <<<<<<<");
@@ -386,15 +394,15 @@ void Estimator::ProcessImu(double dt,
     linear_acceleration_buf_[cir_buf_count_].push_back(linear_acceleration);
     angular_velocity_buf_[cir_buf_count_].push_back(angular_velocity);
 
-    size_t j = cir_buf_count_;
+    size_t j = cir_buf_count_; //已经为初始化状态时， j == estimator_config_.window_size，即窗口内的最后一个位姿
     Vector3d un_acc_0 = Rs_[j] * (acc_last_ - Bas_[j]) + g_vec_;
     Vector3d un_gyr = 0.5 * (gyr_last_ + angular_velocity) - Bgs_[j];
     Rs_[j] *= DeltaQ(un_gyr * dt).toRotationMatrix(); //累乘  
-    //未初始化阶段：
+    //未初始化阶段时：
     //以当前pair measurement中的第一个imu为原点。 每处理一次imu，把imu状态(PVQ)往前推一个dt。
-    //当把该pair中所有imu meas 循环完, 得到的PVQ是两相邻laser间delta_P, delta_V, delta_Q,即这里的Ps_[j], Vs_[j], Rs_[j] 
+    //当把该pair中所有imu meas循环完, 得到的PVQ是两相邻laser间delta_P, delta_V, delta_Q,即这里的Ps_[j], Vs_[j], Rs_[j] 
     //当已经为初始化阶段时：
-    //Ps_[j], Vs_[j], Rs_[j]为当前imu时刻，imu在b0下的PVQ
+    //Ps_[j], Vs_[j], Rs_[j]为用imu的数据预测当前imu时刻，imu在b0下的PVQ
 
     Vector3d un_acc_1 = Rs_[j] * (linear_acceleration - Bas_[j]) + g_vec_;
     Vector3d un_acc = 0.5 * (un_acc_0 + un_acc_1);
@@ -480,7 +488,7 @@ void Estimator::ProcessLaserOdom(const Transform &transform_in, const std_msgs::
   // NOTE: push PointMapping's point_coeff_map_
   ///> optimization buffers   这些变量都是和未初始化阶段相关的变量
   opt_point_coeff_mask_.push(false); // default new frame
-  opt_point_coeff_map_.push(score_point_coeff_); //存的是未初始化阶段当前帧对残差有贡献的surf points每个点的 <score, <curr surf point, 对应的平面单位法向量>
+  opt_point_coeff_map_.push(score_point_coeff_); //存的是未初始化阶段每帧对残差有贡献的surf points每个点的 <score, <curr surf point, 对应的平面单位法向量>
   opt_cube_centers_.push(CubeCenter{laser_cloud_cen_length_, laser_cloud_cen_width_, laser_cloud_cen_height_});
   opt_transforms_.push(laser_transform.transform);
   opt_valid_idx_.push(laser_cloud_valid_idx_);
@@ -495,17 +503,16 @@ void Estimator::ProcessLaserOdom(const Transform &transform_in, const std_msgs::
   }
   
   //这些变量都是和未初始化阶段相关的变量
-  full_stack_.push(boost::make_shared<PointCloud>(*full_cloud_)); //curr帧,该变量没有啥用处
-  opt_surf_stack_.push(surf_stack_.last()); //未初始化那个阶段最新的data
+  full_stack_.push(boost::make_shared<PointCloud>(*full_cloud_)); //curr帧, 没有使用该变量
+  opt_surf_stack_.push(surf_stack_.last()); 
   opt_corner_stack_.push(corner_stack_.last());
-  opt_matP_.push(matP_.cast<double>()); //发生在loam退化时，对解进行修正的矩阵,该变量没有啥用处
+  opt_matP_.push(matP_.cast<double>()); //发生在loam退化时，对解进行修正的矩阵,没有使用该变量
   ///< optimization buffers
 
 
   if (estimator_config_.run_optimization) {//1
     switch (stage_flag_) {
       case NOT_INITED: {
-
         {
           // DLOG(INFO) << "surf_stack_: " << surf_stack_.size();
           // DLOG(INFO) << "corner_stack_: " << corner_stack_.size();
@@ -515,7 +522,6 @@ void Estimator::ProcessLaserOdom(const Transform &transform_in, const std_msgs::
           // DLOG(INFO) << "size_corner_stack_: " << size_corner_stack_.size();
           // DLOG(INFO) << "all_laser_transforms_: " << all_laser_transforms_.size();
         }
-
         bool init_result = false;
         if (cir_buf_count_ == estimator_config_.window_size) {//已经处理了滑窗大小个laser帧
           tic_toc_.Tic();
@@ -626,26 +632,20 @@ void Estimator::ProcessLaserOdom(const Transform &transform_in, const std_msgs::
           ++cir_buf_count_; //只在该处改变,直到处理了滑窗大小个laser帧，才会开始执行初始化
         }
 
-        opt_point_coeff_mask_.last() = true;
+        opt_point_coeff_mask_.last() = true; //未初始化阶段，每处理一帧，置为true
 
         break;
-      }
+      }// end NOT_INITED
       case INITED: {
-
-        // TODO
-
-        // WARNING
-
         if (opt_point_coeff_map_.size() == estimator_config_.opt_window_size + 1) {//当状态为已经初始化的状态时，该if条件满足
-
-          if (estimator_config_.enable_deskew || estimator_config_.cutoff_deskew) {
+          if (estimator_config_.enable_deskew || estimator_config_.cutoff_deskew) {//对当前帧surf和sharp points去畸变, 压入到surf_stack_，corner_stack_中 
             TicToc t_deskew;
             t_deskew.Tic();
             // TODO: the coefficients to be parameterized
             DLOG(INFO) << ">>>>>>> de-skew points <<<<<<<";
             LOG_ASSERT(imu_stampedtransforms.size() > 0) << "no imu data";
-            double time_e = imu_stampedtransforms.last().time; //当前pair measurement中，最新的imu帧(即和当前laser帧挨的最近)
-            Transform transform_e = imu_stampedtransforms.last().transform;
+            double time_e = imu_stampedtransforms.last().time; 
+            Transform transform_e = imu_stampedtransforms.last().transform; //当前pair measurement中，最新的imu帧在b0下的位姿(即和当前laser帧挨的最近)
             double time_s = imu_stampedtransforms.last().time;
             Transform transform_s = imu_stampedtransforms.last().transform;
             for (int i = int(imu_stampedtransforms.size()) - 1; i >= 0; --i) {//找出和最新的imu时间戳大于0.1s的那帧imu(即和上一laser帧挨得最近)
@@ -660,7 +660,7 @@ void Estimator::ProcessLaserOdom(const Transform &transform_in, const std_msgs::
 //            vel2 = Rs_[estimator_config_.window_size].transpose() * Vs_[estimator_config_.window_size];
 //            body_velocity = (vel1 + vel2) / 2;
 
-            Transform transform_body_es = transform_e.inverse() * transform_s; //当前帧laser到上一帧laser的TF
+            Transform transform_body_es = transform_e.inverse() * transform_s; //当前帧laser时刻对应的imu到上一帧laser时刻对应的imu的TF(bk+1_bk_TF)
 //            transform_body_es.pos = -0.1 * body_velocity.cast<float>();
             {
               float s = 0.1 / (time_e - time_s);
@@ -672,15 +672,14 @@ void Estimator::ProcessLaserOdom(const Transform &transform_in, const std_msgs::
               transform_body_es.pos = s * transform_body_es.pos;
             }
 
-            transform_es_ = transform_lb_ * transform_body_es * transform_lb_.inverse();
+            transform_es_ = transform_lb_ * transform_body_es * transform_lb_.inverse(); //transform_es_: lk+1_lk_TF，k+1为当前帧laser，k为上一帧laser
             DLOG(INFO) << "time diff: " << time_e - time_s;
             DLOG(INFO) << "transform diff: " << transform_es_;
             DLOG(INFO) << "transform diff norm: " << transform_es_.pos.norm();
 
             if (!estimator_config_.cutoff_deskew) {
-              TransformToEnd(laser_cloud_surf_last_, transform_es_, 10);
-
-              TransformToEnd(laser_cloud_corner_last_, transform_es_, 10);
+              TransformToEnd(laser_cloud_surf_last_, transform_es_, 10);   //laser_cloud_surf_last_, laser_cloud_corner_last_存放当前帧less flat points， 当前帧less sharp points 
+              TransformToEnd(laser_cloud_corner_last_, transform_es_, 10); //把本帧的points转换到本帧end时刻，即去畸变
 // #ifdef USE_CORNER
 //               TransformToEnd(corner_stack_.last(), transform_es_, 10);
 // #endif
@@ -699,10 +698,10 @@ void Estimator::ProcessLaserOdom(const Transform &transform_in, const std_msgs::
             down_size_filter_corner_.filter(*laser_cloud_corner_stack_downsampled_);
             size_t laser_cloud_corner_stack_ds_size = laser_cloud_corner_stack_downsampled_->points.size();
 
-            surf_stack_.push(boost::make_shared<PointCloud>(*laser_cloud_surf_stack_downsampled_));
+            surf_stack_.push(boost::make_shared<PointCloud>(*laser_cloud_surf_stack_downsampled_)); //把当前帧的surf points压入到surf_stack_
             size_surf_stack_.push(laser_cloud_surf_stack_downsampled_->size());
 
-            corner_stack_.push(boost::make_shared<PointCloud>(*laser_cloud_corner_stack_downsampled_));
+            corner_stack_.push(boost::make_shared<PointCloud>(*laser_cloud_corner_stack_downsampled_)); //把当前帧的sharp points压入到corner_stack_
             size_corner_stack_.push(laser_cloud_corner_stack_downsampled_->size());
 
             ROS_DEBUG_STREAM("deskew time: " << t_deskew.Toc());
@@ -712,18 +711,19 @@ void Estimator::ProcessLaserOdom(const Transform &transform_in, const std_msgs::
 
           DLOG(INFO) << ">>>>>>> solving optimization <<<<<<<";
           SolveOptimization();
-
-          if (!opt_point_coeff_mask_.first()) {
-            UpdateMapDatabase(opt_corner_stack_.first(),
-                              opt_surf_stack_.first(),
-                              opt_valid_idx_.first(),
-                              opt_transforms_.first(),
-                              opt_cube_centers_.first());
+          
+          //https://github.com/hyye/lio-mapping/issues/38，作者在maplab分支中把该函数屏蔽掉了
+          //在https://github.com/hyye/lio-mapping/blob/maplab/src/imu_processor/Estimator.cc
+          if (!opt_point_coeff_mask_.first()) {//TODO 在已经初始化阶段，最老时间戳为true，应该不会执行, 但是实际中却执行了，why？
+            // UpdateMapDatabase(opt_corner_stack_.first(), //这段函数是干什么用？ 
+            //                   opt_surf_stack_.first(),
+            //                   opt_valid_idx_.first(),
+            //                   opt_transforms_.first(),
+            //                   opt_cube_centers_.first());
 
             DLOG(INFO) << "all_laser_transforms_: " << all_laser_transforms_[estimator_config_.window_size
                 - estimator_config_.opt_window_size].second.transform;
             DLOG(INFO) << "opt_transforms_: " << opt_transforms_.first();
-
           }
 
         } else {
@@ -789,10 +789,16 @@ void Estimator::ProcessLaserOdom(const Transform &transform_in, const std_msgs::
 
 void Estimator::ProcessCompactData(const sensor_msgs::PointCloud2ConstPtr &compact_data,
                                    const std_msgs::Header &header) {
-  /// 1. process compact data
-  PointMapping::CompactDataHandler(compact_data); //调用PointMapping类的函数，解析前端发布的"/compact_data"topic，把数据传过来
 
-  //jxl: 这个if没啥作用
+  /// 1. process compact data
+  PointMapping::CompactDataHandler(compact_data); 
+  //调用PointMapping类的函数，解析loam前端发布的"/compact_data"topic, compact_data变量没有使用
+  //laser_cloud_corner_last_: 存放当前帧less sharp points
+  //laser_cloud_surf_last_: 存放当前帧less flat points
+  //full_cloud_: 存放当前帧(包含所有线)所有points
+
+
+  //jxl: 这个if没啥实质作用
   if (stage_flag_ == INITED) {//已经处理了滑窗大小个laser帧，且状态已经初始化成功
     Transform trans_prev(Eigen::Quaterniond(Rs_[estimator_config_.window_size - 1]).cast<float>(),
                          Ps_[estimator_config_.window_size - 1].cast<float>());
@@ -814,7 +820,7 @@ void Estimator::ProcessCompactData(const sensor_msgs::PointCloud2ConstPtr &compa
     if (estimator_config_.imu_factor) {//true
       //    // WARNING: or using direct date?
       transform_tobe_mapped_bef_ = transform_tobe_mapped_ * transform_lb_ * d_trans * transform_lb_.inverse();
-      transform_tobe_mapped_ = transform_tobe_mapped_bef_;
+      transform_tobe_mapped_ = transform_tobe_mapped_bef_; //transform_tobe_mapped_和transform_tobe_mapped_bef_只在此处使用
     } else {
       TransformAssociateToMap();
       DLOG(INFO) << ">>>>> transform original tobe <<<<<: " << transform_tobe_mapped_;
@@ -861,7 +867,7 @@ void Estimator::ProcessCompactData(const sensor_msgs::PointCloud2ConstPtr &compa
   // DLOG(INFO) << "laser_cloud_corner_stack_downsampled_[" << header.stamp.toSec() << "]: "
   //           << laser_cloud_corner_stack_downsampled_->size();
 
-  Transform transform_to_init_ = transform_aft_mapped_;
+  Transform transform_to_init_ = transform_aft_mapped_; //已经初始化后，transform_aft_mapped_不再更新。该变量只在PointMapping::Process()中改变
   ProcessLaserOdom(transform_to_init_, header); 
   //未初始化阶段：
   //transform_to_init_: 通过调用loam后端获得的当前帧laser在map(laser0)下位姿
@@ -996,8 +1002,8 @@ bool Estimator::RunInitialization() {
 //                                   const Transform &local_transform,
 //                                   vector<unique_ptr<Feature>> &features) {
 // #else
-void Estimator::CalculateFeatures(const pcl::KdTreeFLANN<PointT>::Ptr &kdtree_surf_from_map, //滑窗内的所有laser在pivot下点，kdtree形式
-                                  const PointCloudPtr &local_surf_points_filtered_ptr, //滑窗内的所有laser在pivot下点
+void Estimator::CalculateFeatures(const pcl::KdTreeFLANN<PointT>::Ptr &kdtree_surf_from_map, //把滑窗内的[pivot, end]的laser points转换到pivot帧下，kdtree形式
+                                  const PointCloudPtr &local_surf_points_filtered_ptr, //把滑窗内的[pivot, end]的laser points转换到pivot帧下
                                   const PointCloudPtr &surf_stack, //帧i下的点
                                   const Transform &local_transform, //pivot_i_T
                                   vector<unique_ptr<Feature>> &features) {
@@ -1392,6 +1398,7 @@ void Estimator::CalculateLaserOdom(const pcl::KdTreeFLANN<PointT>::Ptr &kdtree_s
   }
 }
 
+//只被solve函数调用
 void Estimator::BuildLocalMap(vector<FeaturePerFrame> &feature_frames) {
   feature_frames.clear();
 
@@ -1419,11 +1426,11 @@ void Estimator::BuildLocalMap(vector<FeaturePerFrame> &feature_frames) {
 
   Twist<double> transform_lb = transform_lb_.cast<double>();
 
-  Eigen::Vector3d Ps_pivot = Ps_[pivot_idx]; //b0_bk_p
-  Eigen::Matrix3d Rs_pivot = Rs_[pivot_idx]; //b0_bk_q
+  Eigen::Vector3d Ps_pivot = Ps_[pivot_idx]; //b0_bpivot_p
+  Eigen::Matrix3d Rs_pivot = Rs_[pivot_idx]; //b0_bpivot_q
 
-  Quaterniond rot_pivot(Rs_pivot * transform_lb.rot.inverse()); //b0_lk_q
-  Eigen::Vector3d pos_pivot = Ps_pivot - rot_pivot * transform_lb.pos; //b0_lk_p
+  Quaterniond rot_pivot(Rs_pivot * transform_lb.rot.inverse()); //b0_lpivot_q
+  Eigen::Vector3d pos_pivot = Ps_pivot - rot_pivot * transform_lb.pos; //b0_lpivot_p
 
   Twist<double> transform_pivot = Twist<double>(rot_pivot, pos_pivot);
 
@@ -1440,7 +1447,7 @@ void Estimator::BuildLocalMap(vector<FeaturePerFrame> &feature_frames) {
 // #endif
     //endregion
 
-    if (!init_local_map_) {
+    if (!init_local_map_) {//初始化成功后的那次laser帧处理时为false；已经初始化阶段处理laser帧时，为true
       PointCloud transformed_cloud_surf, tmp_cloud_surf;
 
 // #ifdef USE_CORNER
@@ -1456,7 +1463,7 @@ void Estimator::BuildLocalMap(vector<FeaturePerFrame> &feature_frames) {
 
         Twist<double> transform_li = Twist<double>(rot_li, pos_li); //b0_lk
         Eigen::Affine3f transform_pivot_i = (transform_pivot.inverse() * transform_li).cast<float>().transform();
-        pcl::transformPointCloud(*(surf_stack_[i]), transformed_cloud_surf, transform_pivot_i); //把当前帧的less surf point转换到pivox帧下
+        pcl::transformPointCloud(*(surf_stack_[i]), transformed_cloud_surf, transform_pivot_i); //把帧i的less surf point转换到pivox帧下
         tmp_cloud_surf += transformed_cloud_surf;
 
 // #ifdef USE_CORNER
@@ -1471,10 +1478,10 @@ void Estimator::BuildLocalMap(vector<FeaturePerFrame> &feature_frames) {
 //       *(corner_stack_[pivot_idx]) = tmp_cloud_corner;
 // #endif
 
-      init_local_map_ = true;
+      init_local_map_ = true; 
     }
 
-    for (int i = 0; i < estimator_config_.window_size + 1; ++i) { //把滑窗内的所有lasers转换到pivot帧下: local_surf_points_ptr_
+    for (int i = 0; i < estimator_config_.window_size + 1; ++i) { //把滑窗内的[pivot, end]的lasers转换到pivot帧下得到local map： local_surf_points_ptr_
 
       Eigen::Vector3d Ps_i = Ps_[i];
       Eigen::Matrix3d Rs_i = Rs_[i];
@@ -1486,7 +1493,8 @@ void Estimator::BuildLocalMap(vector<FeaturePerFrame> &feature_frames) {
       Eigen::Affine3f transform_pivot_i = (transform_pivot.inverse() * transform_li).cast<float>().transform();
 
       Transform local_transform = transform_pivot_i;
-      local_transforms.push_back(local_transform); //pivot_0_T, pivot_1_T, ... pivot_i_T
+      local_transforms.push_back(local_transform); //pivot_0_T, pivot_1_T, ... pivot_i_T, ... pivot_i_end
+      //其中end帧的位姿是在ProcessImu()中用imu数据做积分预测的b0_bend_T, 后面还会用laser points对该帧初始位姿做refine？？？
 
       if (i < pivot_idx) {
         continue;
@@ -1600,9 +1608,10 @@ void Estimator::BuildLocalMap(vector<FeaturePerFrame> &feature_frames) {
 // #else
         CalculateFeatures(kdtree_surf_from_map, local_surf_points_filtered_ptr_, surf_stack_[idx],
                           local_transforms[idx], features);
-        //local map: 滑窗内的所有lasers转换到pivot帧下; 
+        //local map: 把滑窗内的[pivot, end]的laser points转换到pivot帧下
         //把每帧下的点根据pivot_i_T转换到pivot下求点到面的距离残差，以及残差对转换后点的雅克比，和lego_loam一样。
-        //pivot_i_T：由loam后端和在imu初始化阶段得到的imu0与laser0的旋转，得到每帧在b0下的位姿，继而得到pivot_i_T
+        //pivot_i_T：初始化成功那次调用solve函数： 由loam后端和在imu初始化阶段得到的imu0与laser0的旋转，得到每帧在b0下的位姿，继而得到pivot_i_T
+        //已经为初始化状态调用solve函数：上次优化结束后得到的窗口内每帧imu在b0下的位姿，和外参l2b，得到每帧在b0下的位姿。刚添加进窗口内的新位姿是在它的紧挨着的上一帧位姿的基础上用imu数据做积分得到。
         
 // #endif
       } else {//窗口内的最后一帧laser
@@ -1616,8 +1625,9 @@ void Estimator::BuildLocalMap(vector<FeaturePerFrame> &feature_frames) {
         CalculateLaserOdom(kdtree_surf_from_map, local_surf_points_filtered_ptr_, surf_stack_[idx],
                            local_transforms[idx], features);
         //把滑窗内最后一帧下的点根据pivot_end_T转换到pivot下求点到面的距离残差，以及残差对转换后点的雅克比，和lego_loam一样。
-        //迭代计算pivot帧到窗口内的最后帧的变换 pivot_end_T
-        //TODO:奇怪在函数实现里迭代计算的 pivot_end_T 是local_transforms[end]，而local_transforms是一个局部变量，BuildLocalMap()调用结束后就销毁了，没有用。
+        //迭代计算pivot帧到窗口内的最后帧的变换 pivot_end_T，因为最后帧是刚添加进来的，位姿的初值是由倒数第二帧位姿 + imu积分预测得到的
+        //TODO:在函数里对迭代计算的 pivot_end_T 是local_transforms[end]，而local_transforms是一个局部变量，BuildLocalMap()调用结束后就销毁了，没有用。
+       
 
 // #endif
 
@@ -1641,6 +1651,7 @@ void Estimator::BuildLocalMap(vector<FeaturePerFrame> &feature_frames) {
       }
     } else {
       // NOTE: empty features
+      //TODO 少了continue;?
     }
 
     //region Visualization
@@ -1680,7 +1691,7 @@ void Estimator::BuildLocalMap(vector<FeaturePerFrame> &feature_frames) {
     feature_per_frame.id = idx;
 //    feature_per_frame.features = std::move(features);
     feature_per_frame.features.assign(make_move_iterator(features.begin()), make_move_iterator(features.end()));
-    feature_frames.push_back(std::move(feature_per_frame)); //返回窗口内的所有laser帧的FeaturePerFrame
+    feature_frames.push_back(std::move(feature_per_frame)); //返回窗口内[pivot, end]laser帧的FeaturePerFrame
 
     ROS_DEBUG_STREAM("feature cost: " << t_features.Toc() << " ms");
   }
@@ -1783,11 +1794,13 @@ void Estimator::SolveOptimization() {
   vector<FeaturePerFrame> feature_frames;
 
   BuildLocalMap(feature_frames); 
-  // a. local map: 滑窗内的所有lasers转换到pivot帧下
-  // b. 把每帧下的点根据pivot_i_T转换到pivot下与local map匹配，求点到面的距离残差，以及残差对转换后点的雅克比，和lego_loam一样。
-  //    pivot_i_T：由loam后端和在imu初始化阶段得到的imu0与laser0的旋转，得到每帧在b0下的位姿，继而得到pivot_i_T
+  // a. local map: 把滑窗内的[pivot, end]的lasers转换到pivot帧下得到
+  // b. 把每帧i下的点根据pivot_i_T转换到pivot下与local map匹配，求点到面的距离残差，以及残差对转换后点的雅克比，和lego_loam一样。
+  //    pivot_i_T：初始化成功那次调用solve函数： 由loam后端和在imu初始化阶段得到的imu0与laser0的旋转，得到每帧在b0下的位姿，继而得到pivot_i_T
+  //              已经为初始化状态调用solve函数：上次优化结束后得到的窗口内每帧imu在b0下的位姿，和外参l2b，得到每帧在b0下的位姿。
+  //                                         刚添加进窗口内的新位姿是在上一帧的基础上用imu数据做积分得到，见ProcessImu().预测的新位姿是Ps_[estimator_config_.window_size], Rs_[estimator_config_.window_size]
   // c. 迭代计算pivot帧到窗口内的最后帧的变换 pivot_end_T
-  // d. 返回窗口内的所有laser帧的FeaturePerFrame
+  // d. 返回窗口内的[pivot, end]laser帧的FeaturePerFrame
 
   vector<double *> para_ids; //size: estimator_config_.opt_window_size + 1
 
@@ -1816,7 +1829,7 @@ void Estimator::SolveOptimization() {
   }
   //endregion
 
-  //优化变量是: 窗口内每个bk在b0下的p,v,q; ba,bg, 再加lb外参
+  //优化变量是: 窗口内每个bk在b0下的p,v,q; ba,bg, 再加lb外参。bk: laser时刻的imu坐标系；b0：imu的世界坐标系
 
 
 //  P_last0 = Ps_.last();
@@ -1830,7 +1843,7 @@ void Estimator::SolveOptimization() {
 
   //region Marginalization residual
   if (estimator_config_.marginalization_factor) {//true
-    if (last_marginalization_info) {//在后面赋值为true, 初始化成功那次调用SolveOptimization()时为false, 其余为true 
+    if (last_marginalization_info) {//初始化成功那次调用SolveOptimization()时为false(在后面会赋值为true), 其余调用solve时为true。
       // construct new marginlization_factor
       MarginalizationFactor *marginalization_factor = new MarginalizationFactor(last_marginalization_info);
       res_id_marg = problem.AddResidualBlock(marginalization_factor, NULL,
@@ -2210,7 +2223,7 @@ void Estimator::SolveOptimization() {
     VectorToDouble();
     
     //将上一次先验残差项传递给marginalization_info
-    if (last_marginalization_info) { //在后面赋值为true, 初始化成功那次调用SolveOptimization()时为false, 其余为true
+    if (last_marginalization_info) { //初始化成功那次调用SolveOptimization()时为false(在后面会赋值为true), 其余调用solve时为true。
       vector<int> drop_set;
       for (int i = 0; i < static_cast<int>(last_marginalization_parameter_blocks.size()); i++) {
         if (last_marginalization_parameter_blocks[i] == para_pose_[0] ||
@@ -2226,7 +2239,8 @@ void Estimator::SolveOptimization() {
       marginalization_info->AddResidualBlockInfo(residual_block_info);
     }
 
-     //添加跟pivot(要marg的帧)相关的imu残差项
+
+     //添加跟pivot帧(要marg的帧)相关的imu残差项
     if (estimator_config_.imu_factor) {//true
       int pivot_idx = estimator_config_.window_size - estimator_config_.opt_window_size;
       if (pre_integrations_[pivot_idx + 1]->sum_dt_ < 10.0) {
@@ -2241,7 +2255,7 @@ void Estimator::SolveOptimization() {
       }
     }
     
-    //添加跟pivot(要marg的帧)相关的laser残差项
+    //添加跟pivot帧(要marg的帧)相关的laser残差项
     if (estimator_config_.point_distance_factor) {//true
       for (int i = 1; i < estimator_config_.opt_window_size + 1; ++i) {
         int opt_i = int(estimator_config_.window_size - estimator_config_.opt_window_size + i);
@@ -2739,7 +2753,7 @@ void Estimator::ProcessEstimation() {
     PairMeasurements measurements;
     std::unique_lock<std::mutex> buf_lk(buf_mutex_);
     con_.wait(buf_lk, [&] {
-      return (measurements = GetMeasurements()).size() != 0;
+      return (measurements = GetMeasurements()).size() != 0; //不断地获取pairs
     });
     buf_lk.unlock();
 

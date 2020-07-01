@@ -218,9 +218,9 @@ class Estimator : public MeasurementManager, public PointMapping {
   CircularBuffer<vector<Vector3d> > angular_velocity_buf_{estimator_config_.window_size + 1};
 
   CircularBuffer<shared_ptr<IntegrationBase> > pre_integrations_{estimator_config_.window_size + 1};
-  CircularBuffer<PointCloudPtr> surf_stack_{estimator_config_.window_size + 1};
-  CircularBuffer<PointCloudPtr> corner_stack_{estimator_config_.window_size + 1};
-  CircularBuffer<PointCloudPtr> full_stack_{estimator_config_.window_size + 1};
+  CircularBuffer<PointCloudPtr> surf_stack_{estimator_config_.window_size + 1};   //窗口内每帧surf points
+  CircularBuffer<PointCloudPtr> corner_stack_{estimator_config_.window_size + 1}; //窗口内每帧sharp points
+  CircularBuffer<PointCloudPtr> full_stack_{estimator_config_.window_size + 1}; //窗口内每帧全部的points
 
   ///> optimization buffers
   CircularBuffer<bool> opt_point_coeff_mask_{estimator_config_.opt_window_size + 1};
