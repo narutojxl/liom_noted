@@ -1631,8 +1631,7 @@ void Estimator::BuildLocalMap(vector<FeaturePerFrame> &feature_frames) {
         //把滑窗内最后一帧下的点根据pivot_end_T转换到pivot下求点到面的距离残差，以及残差对转换后点的雅克比，和lego_loam一样。
         //迭代计算pivot帧到窗口内的最后帧的变换 pivot_end_T，因为最后帧是刚添加进来的，位姿的初值是由倒数第二帧位姿 + imu积分预测得到的
         //TODO:在函数里对迭代计算的 pivot_end_T 是local_transforms[end]，而local_transforms是一个局部变量，BuildLocalMap()调用结束后就销毁了，没有用。
-       
-
+        
 // #endif
 
         // DLOG(INFO) << "local_transforms[idx] aft" << local_transforms[idx];
