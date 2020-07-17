@@ -76,10 +76,11 @@ void EstimateGyroBias(CircularBuffer<PairTimeLaserTransform> &all_laser_transfor
     //2: 即使计算上面的 q_ij不考虑外参旋转，但是由于残差表达是： r = delta_q.conj() * q_ij
     //现在这计算的系数(残差对bg雅克比)却是 r = q_ij.conj() * delta_q 对bg的雅克比, 不是 r = delta_q.conj() * q_ij
     //https://github.com/hyye/lio-mapping/issues/44
+    //https://github.com/hyye/lio-mapping/issues/73
     A += tmp_A.transpose() * tmp_A;
     b += tmp_A.transpose() * tmp_b;
   }//旋转预积分测量值和调用loam的后端计算的相邻两laser帧间的delta_R
-   //没有用imu预积分测量值的位置、速度预积分测量值
+   //没有用imu位置预积分测量值、速度预积分测量值
    //两个delta_R计算的是同一个量，所以构成残差。系数是旋转预积分测量值对bg的bias，构成normal equation, 求得delta_bg
 
   delta_bg = A.ldlt().solve(b);
@@ -97,6 +98,8 @@ void EstimateGyroBias(CircularBuffer<PairTimeLaserTransform> &all_laser_transfor
 }
 
 
+// 估计g在l0下的向量
+// Visual-Inertial Monocular SLAM with Map Reuse, IV. IMU INITIALIZATION 节， B. Scale and Gravity Approximation 
 bool ApproximateGravity(CircularBuffer<PairTimeLaserTransform> &all_laser_transforms, Vector3d &g,
                         Transform &transform_lb) {
 
@@ -131,7 +134,7 @@ bool ApproximateGravity(CircularBuffer<PairTimeLaserTransform> &all_laser_transf
     Vector3d dv12 = laser_trans_j.second.pre_integration->delta_v_.template cast<double>();
 
     Vector3d pl1 = laser_trans_i.second.transform.pos.template cast<double>(); //通过loam后端计算出来的位姿和外参
-    Vector3d pl2 = laser_trans_j.second.transform.pos.template cast<double>(); //TODO 残差是什么？
+    Vector3d pl2 = laser_trans_j.second.transform.pos.template cast<double>(); 
     Vector3d pl3 = laser_trans_k.second.transform.pos.template cast<double>(); //优化变量是g向量(重力在初始时刻laser0下的表达式)
     Vector3d plb = transform_lb.pos.template cast<double>();
 
@@ -145,14 +148,14 @@ bool ApproximateGravity(CircularBuffer<PairTimeLaserTransform> &all_laser_transf
     VectorXd tmp_b(3);
     tmp_b.setZero();
 
-    tmp_A = 0.5 * I3x3 * (dt12 * dt12 * dt23 + dt23 * dt23 * dt12); //TODO公式待验证
+    tmp_A = 0.5 * I3x3 * (dt12 * dt12 * dt23 + dt23 * dt23 * dt12); //论文中的公式有笔误，作者这的公式是对的，详细推导见笔记。
     tmp_b = (pl2 - pl1) * dt23 - (pl3 - pl2) * dt12
         + (rl2 - rl1) * plb * dt23 - (rl3 - rl2) * plb * dt12
         + rl2 * rlb * dp23 * dt12 + rl1 * rlb * dv12 * dt12 * dt23
         - rl1 * rlb * dp12 * dt23;
 
     A += tmp_A.transpose() * tmp_A;
-    b -= tmp_A.transpose() * tmp_b;
+    b -= tmp_A.transpose() * tmp_b; 
 
 //    A += tmp_A;
 //    b -= tmp_b;
@@ -178,6 +181,9 @@ bool ApproximateGravity(CircularBuffer<PairTimeLaserTransform> &all_laser_transf
   return fabs(g_approx.norm() - g_norm) <= 1.0;
 
 }
+
+
+
 
 void RefineGravityAccBias(CircularBuffer<PairTimeLaserTransform> &all_laser_transforms,
                           CircularBuffer<Vector3d> &Vs,
@@ -440,7 +446,7 @@ bool ImuInitializer::EstimateExtrinsicRotation(CircularBuffer<PairTimeLaserTrans
 
 //作者的初始化代码来自vins-mono,见https://www.cnblogs.com/buxiaoyi/p/8203285.html, 崔华坤vins_mono笔记
 //原始vins_mono初始化代码: https://github.com/HKUST-Aerial-Robotics/VINS-Mono/blob/0d280936e441ebb782bf8855d86e13999a22da63/vins_estimator/src/initial/initial_aligment.cpp
-bool ImuInitializer::Initialization(CircularBuffer<PairTimeLaserTransform> &all_laser_transforms, //窗口内每帧的位姿 +　last帧到curr帧的imu数据，包括对这些imu数据的预积分
+bool ImuInitializer::Initialization(CircularBuffer<PairTimeLaserTransform> &all_laser_transforms, //窗口内每帧的位姿 +　每相邻两帧间imu数据，包括对这些imu数据的预积分
                                     CircularBuffer<Vector3d> &Vs,  //窗口内相邻两帧laser，前一帧laser到后一帧laer的delta_v
                                     CircularBuffer<Vector3d> &Bas, //返回窗口内每积分区间的ba
                                     CircularBuffer<Vector3d> &Bgs, //返回窗口内每积分区间的bg
